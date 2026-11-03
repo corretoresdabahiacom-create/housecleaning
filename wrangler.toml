@@ -1,7 +1,7 @@
 # Cloudflare configuration. Resource IDs are placeholders: create resources with the commands in docs/DEPLOYMENT.md.
 name = "house-cleaning-management"
 main = "worker/src/index.ts"
-compatibility_date = "2026-10-01"
+compatibility_date = "2025-07-18"
 
 [assets]
 directory = "./dist"
