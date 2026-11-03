@@ -63,9 +63,9 @@ input[type=checkbox] { min-height: auto; width: 18px; height: 18px; accent-color
 .list { list-style: none; margin: 0; padding: 0; } .list li { display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--line); align-items: center; } .list li:last-child { border-bottom: 0; }
 .empty { padding: 22px; text-align: center; color: var(--muted); }
 .badge { display: inline-block; padding: 2px 9px; border-radius: 99px; font-size: .74rem; font-weight: 600; background: #eef1f6; color: var(--navy); margin-right: 4px; white-space: nowrap; }
-.b-active, .b-paid, .b-completed, .b-confirmed { background: #e3f4ea; color: var(--good); }
+.b-trial, .b-active, .b-paid, .b-completed, .b-confirmed { background: #e3f4ea; color: var(--good); }
 .b-pending, .b-scheduled, .b-pending_confirmation, .b-partially_paid, .b-in_progress { background: #fff3dd; color: var(--warn); }
-.b-overdue, .b-canceled, .b-absent, .b-suspended, .b-written_off, .b-customer_unavailable { background: #fde8ea; color: var(--bad); }
+.b-past_due, .b-overdue, .b-canceled, .b-absent, .b-suspended, .b-written_off, .b-customer_unavailable { background: #fde8ea; color: var(--bad); }
 .b-archived, .b-inactive, .b-rescheduled, .b-disabled, .b-deleted { background: #eceff3; color: var(--muted); }
 
 /* tables */
@@ -159,3 +159,17 @@ td { padding: 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
   .topbar, .side, .btn, .filters, .period, .seg, .toasts, .banner { display: none !important; }
   .shell { display: block; } .main { padding: 0; } .card { box-shadow: none; border: 0; } .modal-bg { position: static; background: none; } .modal { box-shadow: none; max-height: none; }
 }
+
+/* autocomplete */
+.combo { position: relative; } .combo input { width: 100%; }
+.combo-list { position: absolute; z-index: 70; left: 0; right: 0; top: 100%; margin: 4px 0 0; padding: 4px; list-style: none; background: #fff; border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); max-height: 260px; overflow: auto; }
+.combo-list li { padding: 8px 10px; border-radius: 8px; cursor: pointer; } .combo-list li.on, .combo-list li:hover { background: #eef2f9; }
+/* photos, route, mfa */
+.photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; } .photo { position: relative; } .photo img { width: 100%; aspect-ratio: 4/3; object-fit: cover; border-radius: 10px; border: 1px solid var(--line); }
+.photo button { position: absolute; top: 4px; right: 4px; } .photo small { display: block; color: var(--muted); font-size: .76rem; }
+.route-list { margin: 0; padding-left: 20px; } .route-list li { padding: 4px 0; }
+.codes { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; font-family: ui-monospace, monospace; background: var(--bg); padding: 12px; border-radius: 10px; }
+.mono { font-family: ui-monospace, monospace; word-break: break-all; } .translated { border-left: 3px solid var(--red); padding-left: 8px; margin-top: 6px; font-style: italic; }
+.live { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 6px; } .live.on { background: var(--good); }
+.combo-sm { min-width: 200px; }
+.turnstile { margin: 10px 0; min-height: 65px; }

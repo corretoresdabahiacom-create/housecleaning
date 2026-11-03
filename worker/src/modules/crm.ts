@@ -1,5 +1,7 @@
-import { HttpError, Router, assertCurrency, json, likeParam, nowIso, page, uid, validate } from '../lib/core';
+import { HttpError, Router, assertCurrency, todayIn, json, likeParam, nowIso, page, uid, validate } from '../lib/core';
 import { audit, decrypt, encrypt, owned, requirePerm } from '../lib/security';
+import { sniff } from './messages';
+import { checkPlanLimit } from './reports';
 
 const STATUS = ['active', 'inactive', 'archived', 'pending'] as const;
 const LANGS = ['en', 'pt', 'es'] as const;
@@ -22,6 +24,7 @@ const propertySchema = {
   bathrooms: { type: 'int', min: 0, max: 50 }, size_sqft: { type: 'int', min: 0, max: 100000 }, floors: { type: 'int', min: 0, max: 20 },
   parking: { type: 'string', max: 500 }, pets: { type: 'string', max: 500 }, special_instructions: { type: 'string', max: 4000 },
   preferred_time: { type: 'time' }, estimated_minutes: { type: 'int', min: 15, max: 1440 }, private_notes: { type: 'string', max: 4000 },
+  latitude: { type: 'string', max: 20 }, longitude: { type: 'string', max: 20 },
 } as const;
 
 const helperSchema = {
@@ -32,6 +35,17 @@ const helperSchema = {
   description: { type: 'string', max: 2000 }, favorite: { type: 'bool' }, status: { type: 'enum', values: ['active', 'archived'] },
   default_pay_basis: { type: 'enum', values: BASIS }, default_rate: { type: 'money' },
 } as const;
+
+/** Coordinates are optional (route ordering). Stored as REAL; they are geographic, not monetary. */
+function coords(v: any) {
+  for (const [k, lim] of [['latitude', 90], ['longitude', 180]] as const) {
+    if (v[k] === undefined || v[k] === null) continue;
+    const n = Number(v[k]);
+    if (!/^-?\d{1,3}(\.\d{1,8})?$/.test(String(v[k])) || Math.abs(n) > lim) throw new HttpError(422, 'validation_error', { [k]: 'invalid' });
+    v[k] = n;
+  }
+  return v;
+}
 
 /** Builds a safe UPDATE from validated fields (column names come from the schema, never from input). */
 function updateSql(table: string, v: Record<string, any>, rename: Record<string, string> = {}) {
@@ -103,12 +117,13 @@ export function crmRoutes(r: Router) {
   });
   r.post('/api/properties', async (c) => {
     const s = await requirePerm(c.env, c.session, 'properties.write');
-    const v = validate(await c.body(), propertySchema);
+    const v = coords(validate(await c.body(), propertySchema));
     await owned(c.env, 'customers', v.customer_id, s.companyId);
+    await checkPlanLimit(c.env, s.companyId, 'properties');
     const currency = assertCurrency(v.currency, s.currency);
     if (!/^\d{5}(-\d{4})?$/.test(v.zip)) throw new HttpError(422, 'validation_error', { zip: 'zip' });
     const id = uid(), now = nowIso();
-    const cols = ['unit', 'phone', 'property_type', 'bedrooms', 'bathrooms', 'size_sqft', 'floors', 'parking', 'pets', 'special_instructions', 'preferred_time', 'estimated_minutes', 'private_notes'] as const;
+    const cols = ['unit', 'phone', 'property_type', 'bedrooms', 'bathrooms', 'size_sqft', 'floors', 'parking', 'pets', 'special_instructions', 'preferred_time', 'estimated_minutes', 'private_notes', 'latitude', 'longitude'] as const;
     await c.env.DB.prepare(`INSERT INTO residential_properties (id,company_id,customer_id,name,street,city,state,zip,price_cents,pricing_model,currency,frequency,status,${cols.join(',')},created_at,updated_at)
       VALUES (${Array(13 + cols.length + 2).fill('?').join(',')})`)
       .bind(id, s.companyId, v.customer_id, v.name, v.street, v.city, v.state.toUpperCase(), v.zip, v.price, v.pricing_model || 'fixed', currency, v.frequency, v.status || 'active',
@@ -128,7 +143,7 @@ export function crmRoutes(r: Router) {
   r.put('/api/properties/:id', async (c) => {
     const s = await requirePerm(c.env, c.session, 'properties.write');
     await owned(c.env, 'residential_properties', c.params.id, s.companyId);
-    const v: any = validate(await c.body(), propertySchema, true);
+    const v: any = coords(validate(await c.body(), propertySchema, true));
     if (v.customer_id) await owned(c.env, 'customers', v.customer_id, s.companyId);
     if (v.currency) assertCurrency(v.currency, s.currency);
     if (v.zip && !/^\d{5}(-\d{4})?$/.test(v.zip)) throw new HttpError(422, 'validation_error', { zip: 'zip' });
@@ -147,7 +162,7 @@ export function crmRoutes(r: Router) {
     const row = await c.env.DB.prepare('SELECT * FROM property_access_instructions WHERE property_id=? AND company_id=?').bind(c.params.id, s.companyId).first<any>();
     await audit(c.env, s, 'read', 'property_access', c.params.id);
     if (!row) return json({ instructions: null });
-    return json({ instructions: await decrypt(c.env, row.ciphertext, row.iv, `${s.companyId}:${c.params.id}`), updated_at: row.updated_at });
+    return json({ instructions: await decrypt(c.env, row.ciphertext, row.iv, `${s.companyId}:${c.params.id}`, row.key_version), updated_at: row.updated_at });
   });
   r.put('/api/properties/:id/access', async (c) => {
     const s = await requirePerm(c.env, c.session, 'properties.access_info');
@@ -157,9 +172,9 @@ export function crmRoutes(r: Router) {
       await c.env.DB.prepare('DELETE FROM property_access_instructions WHERE property_id=? AND company_id=?').bind(c.params.id, s.companyId).run();
     } else {
       const e = await encrypt(c.env, v.instructions, `${s.companyId}:${c.params.id}`);
-      await c.env.DB.prepare(`INSERT INTO property_access_instructions (property_id,company_id,ciphertext,iv,updated_at,updated_by) VALUES (?,?,?,?,?,?)
-        ON CONFLICT(property_id) DO UPDATE SET ciphertext=excluded.ciphertext, iv=excluded.iv, updated_at=excluded.updated_at, updated_by=excluded.updated_by`)
-        .bind(c.params.id, s.companyId, e.ciphertext, e.iv, nowIso(), s.userId).run();
+      await c.env.DB.prepare(`INSERT INTO property_access_instructions (property_id,company_id,ciphertext,iv,updated_at,updated_by,key_version) VALUES (?,?,?,?,?,?,?)
+        ON CONFLICT(property_id) DO UPDATE SET ciphertext=excluded.ciphertext, iv=excluded.iv, updated_at=excluded.updated_at, updated_by=excluded.updated_by, key_version=excluded.key_version`)
+        .bind(c.params.id, s.companyId, e.ciphertext, e.iv, nowIso(), s.userId, e.version).run();
     }
     await audit(c.env, s, 'update', 'property_access', c.params.id);
     return json({ ok: true });
@@ -196,6 +211,50 @@ export function crmRoutes(r: Router) {
     return json({ ok: true });
   });
 
+  // ───────── Property photos (R2; images only, type checked by magic bytes; 8 MB; 20 per property) ─────────
+  r.get('/api/properties/:id/photos', async (c) => {
+    const s = await requirePerm(c.env, c.session, 'properties.read');
+    await owned(c.env, 'residential_properties', c.params.id, s.companyId);
+    const { results } = await c.env.DB.prepare('SELECT id, caption, content_type, created_at FROM property_photos WHERE property_id=? AND company_id=? ORDER BY created_at').bind(c.params.id, s.companyId).all();
+    return json({ items: results });
+  });
+  r.post('/api/properties/:id/photos', async (c) => {
+    const s = await requirePerm(c.env, c.session, 'properties.write');
+    await owned(c.env, 'residential_properties', c.params.id, s.companyId);
+    if (!c.env.FILES) throw new HttpError(503, 'storage_not_configured');
+    if (!(c.req.headers.get('content-type') || '').startsWith('multipart/form-data')) throw new HttpError(415, 'multipart_required');
+    const n = await c.env.DB.prepare('SELECT COUNT(*) n FROM property_photos WHERE property_id=? AND company_id=?').bind(c.params.id, s.companyId).first<any>();
+    if (n.n >= 20) throw new HttpError(422, 'photo_limit_reached');
+    const form = await c.req.formData();
+    const file = form.get('file') as unknown as File | null;
+    if (!file || typeof file !== 'object') throw new HttpError(422, 'validation_error', { file: 'required' });
+    if (file.size > 8 * 1024 * 1024) throw new HttpError(413, 'attachment_too_large');
+    const buf = new Uint8Array(await file.arrayBuffer());
+    const type = sniff(buf);
+    if (!type || !type.startsWith('image/')) throw new HttpError(415, 'attachment_type_not_allowed');
+    const id = uid(), key = `photos/${s.companyId}/${c.params.id}/${id}`;
+    await c.env.FILES.put(key, buf, { httpMetadata: { contentType: type } });
+    await c.env.DB.prepare('INSERT INTO property_photos (id,company_id,property_id,r2_key,content_type,caption,created_at) VALUES (?,?,?,?,?,?,?)')
+      .bind(id, s.companyId, c.params.id, key, type, String(form.get('caption') || '').slice(0, 200) || null, nowIso()).run();
+    return json({ id }, 201);
+  });
+  r.get('/api/photos/:id', async (c) => {
+    const s = await requirePerm(c.env, c.session, 'properties.read');
+    const ph = await c.env.DB.prepare('SELECT * FROM property_photos WHERE id=? AND company_id=?').bind(c.params.id, s.companyId).first<any>();
+    if (!ph) throw new HttpError(404, 'not_found');
+    const obj = await c.env.FILES?.get(ph.r2_key);
+    if (!obj) throw new HttpError(404, 'not_found');
+    return new Response(obj.body, { headers: { 'content-type': ph.content_type, 'x-content-type-options': 'nosniff', 'cache-control': 'private, max-age=300', 'content-security-policy': "default-src 'none'" } });
+  });
+  r.del('/api/photos/:id', async (c) => {
+    const s = await requirePerm(c.env, c.session, 'properties.write');
+    const ph = await c.env.DB.prepare('SELECT * FROM property_photos WHERE id=? AND company_id=?').bind(c.params.id, s.companyId).first<any>();
+    if (!ph) throw new HttpError(404, 'not_found');
+    await c.env.FILES?.delete(ph.r2_key);
+    await c.env.DB.prepare('DELETE FROM property_photos WHERE id=?').bind(ph.id).run();
+    return json({ ok: true });
+  });
+
   r.get('/api/properties/:id/history', async (c) => {
     const s = await requirePerm(c.env, c.session, 'properties.read');
     await owned(c.env, 'residential_properties', c.params.id, s.companyId);
@@ -207,7 +266,7 @@ export function crmRoutes(r: Router) {
         FROM cleaning_appointments a LEFT JOIN cleaning_services sv ON sv.id=a.service_id
         LEFT JOIN accounts_receivable ar ON ar.appointment_id=a.id
        WHERE a.company_id=? AND a.property_id=? ORDER BY a.date DESC, a.start_time DESC LIMIT 500`).bind(s.companyId, c.params.id).all();
-    const next = await c.env.DB.prepare(`SELECT id,date,start_time FROM cleaning_appointments WHERE company_id=? AND property_id=? AND date>=date('now') AND status NOT IN ('completed','canceled') ORDER BY date,start_time LIMIT 1`).bind(s.companyId, c.params.id).first();
+    const next = await c.env.DB.prepare(`SELECT id,date,start_time FROM cleaning_appointments WHERE company_id=? AND property_id=? AND date>=? AND status NOT IN ('completed','canceled') ORDER BY date,start_time LIMIT 1`).bind(s.companyId, c.params.id, todayIn(s.timezone)).first();
     return json({ items: results, next });
   });
 

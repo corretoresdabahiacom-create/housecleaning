@@ -2,7 +2,7 @@
 
 A multi-tenant SaaS MVP for residential cleaning companies in the United States: customers and multiple residences, negotiated prices, recurring schedules, helper assignments and payments, receivables, payables, DRE (income statement), cash flow, property profitability, private 24-hour messaging, and reports. English (default), Portuguese, and Spanish.
 
-**Stack:** React + TypeScript (Vite) · Cloudflare Workers (modular monolith, no framework) · D1 (SQLite) · R2 (attachments) · Cron Triggers.
+**Stack:** React + TypeScript (Vite) · Cloudflare Workers (modular monolith, no framework) · D1 (SQLite) · R2 (photos, attachments) · Durable Objects (real-time chat) · Cron Triggers · optional Workers AI, Turnstile, WhatsApp Cloud API.
 **Status:** functional MVP, tested locally on the Workers runtime with D1. **Not deployed** (no Cloudflare credentials were provided). See [docs/STATUS.md](docs/STATUS.md).
 
 ![Financial overview](docs/screenshots/desktop-finance-overview.png)
@@ -39,7 +39,8 @@ In development (`APP_ENV=development`) email delivery is not configured: verific
 
 | Command | What it does |
 |---|---|
-| `npm test` | Runs the automated suite (29 tests) against the real API and the real migration on in-memory SQLite |
+| `npm test` | Runs the automated suite (45 tests) against the real API and the real migrations on in-memory SQLite |
+| `npm run test:e2e` | Browser tests (Playwright + Chromium) against the real Worker on workerd; first run: `npm i -D playwright; npx playwright install chromium` |
 | `npm run typecheck` | TypeScript strict-null check of worker, web, and tests |
 | `npm run build` | Builds the React app into `dist/` (served by the Worker as static assets) |
 | `npm run db:migrate:local` | Applies `migrations/` to the local D1 database |
@@ -49,7 +50,7 @@ In development (`APP_ENV=development`) email delivery is not configured: verific
 ## Project structure
 
 ```
-migrations/0001_init.sql     D1 schema: 35 tables, FKs, CHECKs, UNIQUE dedupe keys, indexes
+migrations/0001_init.sql     D1 schema (2 migrations), FKs, CHECKs, UNIQUE dedupe keys, indexes
 worker/src/index.ts          fetch + scheduled entry points, CSRF check, error handling, security headers
 worker/src/lib/core.ts       router, validation, integer-cents money helpers
 worker/src/lib/security.ts   PBKDF2 passwords, sessions, RBAC, rate limiting, AES-GCM, audit
@@ -65,7 +66,7 @@ docs/                        architecture, methodology, audit, deployment, legal
 - [Architecture, data model, API and screen map](docs/ARCHITECTURE.md)
 - [Financial methodology: DRE, cash flow, profitability, reconciliation](docs/FINANCIAL_METHODOLOGY.md)
 - [Test execution report](docs/TEST_REPORT.md) · [Security audit](docs/SECURITY_AUDIT.md)
-- [Deployment and cost estimate](docs/DEPLOYMENT.md)
+- [Deployment and cost estimate](docs/DEPLOYMENT.md) · [Key rotation](docs/KEY_ROTATION.md)
 - [Status and known limitations](docs/STATUS.md)
 - [Legal drafts (require attorney review)](docs/legal/)
 

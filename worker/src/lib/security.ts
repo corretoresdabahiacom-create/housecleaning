@@ -61,7 +61,7 @@ export async function loadSession(env: Env, req: Request): Promise<Session | nul
   const id = await sha256(token);
   const row = await env.DB.prepare(
     `SELECT s.id, s.user_id, s.company_id, s.expires_at, s.revoked_at, m.role, m.helper_id, m.status AS member_status,
-            u.is_platform_admin, u.deleted_at, c.status AS company_status, c.currency
+            u.is_platform_admin, u.deleted_at, c.status AS company_status, c.currency, c.timezone
        FROM user_sessions s
        JOIN users u ON u.id = s.user_id
        JOIN companies c ON c.id = s.company_id
@@ -72,7 +72,7 @@ export async function loadSession(env: Env, req: Request): Promise<Session | nul
   if (row.company_status !== 'active' && !row.is_platform_admin) return null;
   return {
     userId: row.user_id, companyId: row.company_id, role: row.role, helperId: row.helper_id,
-    isPlatformAdmin: !!row.is_platform_admin, sessionId: row.id, currency: row.currency,
+    isPlatformAdmin: !!row.is_platform_admin, sessionId: row.id, currency: row.currency, timezone: row.timezone,
   };
 }
 
@@ -128,20 +128,92 @@ export async function rateLimit(env: Env, key: string, limit: number, windowSec:
 }
 
 // ───────── Encryption for access instructions (AES-256-GCM) ─────────
-async function aesKey(env: Env) {
-  if (!env.ENCRYPTION_KEY) throw new HttpError(500, 'encryption_not_configured');
-  const raw = unb64(env.ENCRYPTION_KEY);
+// Key rotation: ENCRYPTION_KEY is the current key (version ENCRYPTION_KEY_VERSION, default 1);
+// ENCRYPTION_KEY_PREVIOUS (version - 1) stays readable until re-encryption completes. See docs/KEY_ROTATION.md.
+export const currentKeyVersion = (env: Env) => parseInt(env.ENCRYPTION_KEY_VERSION || '1', 10);
+async function aesKey(env: Env, version?: number) {
+  const v = version ?? currentKeyVersion(env);
+  const secret = v === currentKeyVersion(env) ? env.ENCRYPTION_KEY : v === currentKeyVersion(env) - 1 ? env.ENCRYPTION_KEY_PREVIOUS : undefined;
+  if (!secret) throw new HttpError(500, 'encryption_key_unavailable');
+  const raw = unb64(secret);
   if (raw.length !== 32) throw new HttpError(500, 'encryption_not_configured');
   return crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']);
 }
 export async function encrypt(env: Env, plaintext: string, aad: string) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: enc.encode(aad) }, await aesKey(env), enc.encode(plaintext));
-  return { ciphertext: b64(ct), iv: b64(iv) };
+  return { ciphertext: b64(ct), iv: b64(iv), version: currentKeyVersion(env) };
 }
-export async function decrypt(env: Env, ciphertext: string, iv: string, aad: string) {
-  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(iv), additionalData: enc.encode(aad) }, await aesKey(env), unb64(ciphertext));
+export async function decrypt(env: Env, ciphertext: string, iv: string, aad: string, version?: number) {
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(iv), additionalData: enc.encode(aad) }, await aesKey(env, version), unb64(ciphertext));
   return new TextDecoder().decode(pt);
+}
+
+/** Re-encrypts every secret stored with an older key version. Idempotent; run after deploying a new key. */
+export async function rotateEncryptedData(env: Env) {
+  const cur = currentKeyVersion(env);
+  let n = 0;
+  const { results } = await env.DB.prepare('SELECT * FROM property_access_instructions WHERE key_version<>?').bind(cur).all<any>();
+  for (const r of results) {
+    const aad = `${r.company_id}:${r.property_id}`;
+    const e = await encrypt(env, await decrypt(env, r.ciphertext, r.iv, aad, r.key_version), aad);
+    await env.DB.prepare('UPDATE property_access_instructions SET ciphertext=?, iv=?, key_version=? WHERE property_id=? AND key_version=?').bind(e.ciphertext, e.iv, e.version, r.property_id, r.key_version).run();
+    n++;
+  }
+  const { results: mfa } = await env.DB.prepare('SELECT id, mfa_secret_enc, mfa_secret_iv, mfa_key_version FROM users WHERE mfa_secret_enc IS NOT NULL AND mfa_key_version<>?').bind(cur).all<any>();
+  for (const u of mfa) {
+    const aad = `mfa:${u.id}`;
+    const e = await encrypt(env, await decrypt(env, u.mfa_secret_enc, u.mfa_secret_iv, aad, u.mfa_key_version), aad);
+    await env.DB.prepare('UPDATE users SET mfa_secret_enc=?, mfa_secret_iv=?, mfa_key_version=? WHERE id=?').bind(e.ciphertext, e.iv, e.version, u.id).run();
+    n++;
+  }
+  return n;
+}
+
+// ───────── TOTP (RFC 6238, SHA-1, 30 s, 6 digits) ─────────
+const B32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+export function base32Encode(bytes: Uint8Array) {
+  let bits = 0, val = 0, out = '';
+  for (const b of bytes) { val = (val << 8) | b; bits += 8; while (bits >= 5) { out += B32[(val >>> (bits - 5)) & 31]; bits -= 5; } }
+  if (bits > 0) out += B32[(val << (5 - bits)) & 31];
+  return out;
+}
+export function base32Decode(s: string) {
+  const clean = s.replace(/=+$/, '').replace(/\s/g, '').toUpperCase();
+  let bits = 0, val = 0; const out: number[] = [];
+  for (const ch of clean) { const i = B32.indexOf(ch); if (i < 0) throw new Error('bad base32'); val = (val << 5) | i; bits += 5; if (bits >= 8) { out.push((val >>> (bits - 8)) & 255); bits -= 8; } }
+  return new Uint8Array(out);
+}
+export async function totp(secretB32: string, step: number) {
+  const key = await crypto.subtle.importKey('raw', base32Decode(secretB32), { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']);
+  const msg = new Uint8Array(8); let x = step;
+  for (let i = 7; i >= 0; i--) { msg[i] = x & 255; x = Math.floor(x / 256); }
+  const h = new Uint8Array(await crypto.subtle.sign('HMAC', key, msg));
+  const o = h[19] & 15;
+  const code = (((h[o] & 127) << 24) | (h[o + 1] << 16) | (h[o + 2] << 8) | h[o + 3]) % 1_000_000;
+  return String(code).padStart(6, '0');
+}
+/** Returns the matched time step (±1 window) or null. */
+export async function verifyTotp(secretB32: string, code: string, now = Date.now()) {
+  if (!/^\d{6}$/.test(code)) return null;
+  const step = Math.floor(now / 30000);
+  for (const s of [step, step - 1, step + 1]) if (timingSafeEqual(await totp(secretB32, s), code)) return s;
+  return null;
+}
+
+// ───────── Turnstile (bot protection) ─────────
+export async function checkTurnstile(env: Env, req: Request, token: unknown) {
+  if (!env.TURNSTILE_SECRET) return; // disabled unless configured
+  if (typeof token !== 'string' || !token) throw new HttpError(400, 'captcha_required');
+  const form = new FormData();
+  form.set('secret', env.TURNSTILE_SECRET); form.set('response', token);
+  const ip = req.headers.get('cf-connecting-ip'); if (ip) form.set('remoteip', ip);
+  let ok = false;
+  try {
+    const r = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', { method: 'POST', body: form });
+    ok = !!((await r.json()) as any)?.success;
+  } catch { ok = false; }
+  if (!ok) throw new HttpError(400, 'captcha_failed');
 }
 
 // ───────── Audit (never pass secrets in details) ─────────

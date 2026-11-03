@@ -1,5 +1,6 @@
 # Cloudflare configuration. Resource IDs are placeholders: create resources with the commands in docs/DEPLOYMENT.md.
 name = "house-cleaning-management"
+account_id = "38447d80d8f04048737c82c96665f780"
 main = "worker/src/index.ts"
 compatibility_date = "2025-07-18"
 
@@ -7,6 +8,7 @@ compatibility_date = "2025-07-18"
 directory = "./dist"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]   # API links opened directly (exports, photos, attachments) must reach the Worker, not the SPA fallback
 
 [[d1_databases]]
 binding = "DB"
@@ -19,7 +21,22 @@ binding = "FILES"
 bucket_name = "hcm-files"
 
 [triggers]
-crons = ["*/15 * * * *"]   # message expiry purge, recurring horizon, recurring expenses, rate-limit pruning
+crons = ["*/15 * * * *"]   # message expiry, recurring horizon, recurring expenses, company purge, key re-encryption, rate-limit pruning
+
+# Realtime chat hub (one Durable Object per company, WebSocket hibernation)
+[[durable_objects.bindings]]
+name = "REALTIME"
+class_name = "RealtimeHub"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RealtimeHub"]
+
+# Optional features — uncomment when enabled (see docs/DEPLOYMENT.md):
+# [ai]                      # Workers AI, used for on-demand message translation (paid usage beyond free allocation)
+# binding = "AI"
+# Secrets (wrangler secret put): ENCRYPTION_KEY, ENCRYPTION_KEY_PREVIOUS, TURNSTILE_SECRET, WHATSAPP_TOKEN
+# Vars: ENCRYPTION_KEY_VERSION, TURNSTILE_SITE_KEY, WHATSAPP_PHONE_NUMBER_ID, PURGE_AFTER_DAYS
 
 [vars]
 APP_ENV = "development"
@@ -37,3 +54,8 @@ binding = "FILES"
 bucket_name = "hcm-files-staging"
 [env.staging.triggers]
 crons = ["*/15 * * * *"]
+[[env.staging.durable_objects.bindings]]
+name = "REALTIME"
+class_name = "RealtimeHub"
+# [env.staging.ai]
+# binding = "AI"

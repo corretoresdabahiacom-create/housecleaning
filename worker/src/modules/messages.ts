@@ -1,5 +1,6 @@
 import { Env, HttpError, Router, Session, json, nowIso, uid, validate } from '../lib/core';
 import { owned, requirePerm } from '../lib/security';
+import { connectRealtime, notifyRealtime } from '../realtime';
 
 export const MESSAGE_TTL_MS = 24 * 3600 * 1000;
 const MAX_ATTACHMENT = 5 * 1024 * 1024;
@@ -17,7 +18,7 @@ async function ensureConversation(env: Env, companyId: string, helperId: string)
 }
 
 // Magic-number sniffing so the declared content-type cannot be spoofed.
-function sniff(b: Uint8Array): string | null {
+export function sniff(b: Uint8Array): string | null {
   if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg';
   if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'image/png';
   if (b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46) return 'application/pdf';
@@ -25,10 +26,34 @@ function sniff(b: Uint8Array): string | null {
   return null;
 }
 
+// ───────── WhatsApp Cloud API (optional; only when configured AND enabled by the company) ─────────
+// Meta rules: free-form text is delivered only within 24 h of the helper's last WhatsApp reply; outside that window
+// Meta requires a pre-approved template (error 131047). Failures are logged and never block in-app delivery.
+export async function sendWhatsApp(env: Env, companyId: string, messageId: string, phone: string, body: string) {
+  const co = await env.DB.prepare('SELECT whatsapp_enabled FROM companies WHERE id=?').bind(companyId).first<any>();
+  if (!env.WHATSAPP_TOKEN || !env.WHATSAPP_PHONE_NUMBER_ID || !co?.whatsapp_enabled) return { status: 'disabled' as const };
+  const to = phone.replace(/\D/g, '');
+  let status: 'sent' | 'failed' = 'failed', providerId: string | null = null, error: string | null = null;
+  try {
+    const r = await fetch(`https://graph.facebook.com/v21.0/${encodeURIComponent(env.WHATSAPP_PHONE_NUMBER_ID)}/messages`, {
+      method: 'POST', headers: { authorization: `Bearer ${env.WHATSAPP_TOKEN}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ messaging_product: 'whatsapp', recipient_type: 'individual', to, type: 'text', text: { preview_url: false, body: body.slice(0, 4096) } }),
+    });
+    const d: any = await r.json().catch(() => ({}));
+    if (r.ok && d?.messages?.[0]?.id) { status = 'sent'; providerId = d.messages[0].id; }
+    else error = String(d?.error?.code ?? r.status) + ' ' + String(d?.error?.message ?? '').slice(0, 200);
+  } catch (e) { error = String((e as Error).message).slice(0, 200); }
+  await env.DB.prepare('INSERT INTO message_delivery_events (id,company_id,message_id,channel,status,provider_id,error,created_at) VALUES (?,?,?,?,?,?,?,?)')
+    .bind(uid(), companyId, messageId, 'whatsapp', status, providerId, error, nowIso()).run();
+  return { status, error };
+}
+
 async function insertMessage(env: Env, s: Session, convId: string, body: string, side: 'company' | 'helper', att?: { key: string; name: string; type: string }) {
   const id = uid(), created = new Date();
   await env.DB.prepare('INSERT INTO messages (id,company_id,conversation_id,sender_user_id,sender_side,body,attachment_key,attachment_name,attachment_type,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
     .bind(id, s.companyId, convId, s.userId, side, body, att?.key ?? null, att?.name ?? null, att?.type ?? null, created.toISOString(), new Date(created.getTime() + MESSAGE_TTL_MS).toISOString()).run();
+  const conv = await env.DB.prepare('SELECT helper_id FROM conversations WHERE id=?').bind(convId).first<any>();
+  await notifyRealtime(env, s.companyId, { conversation_id: convId, helper_id: conv?.helper_id });
   return id;
 }
 
@@ -84,7 +109,13 @@ export function messageRoutes(r: Router) {
     if (!body.trim() && !att) throw new HttpError(422, 'validation_error', { body: 'required' });
     if (body.length > 4000) throw new HttpError(422, 'validation_error', { body: 'too_long' });
     const id = await insertMessage(c.env, s, conv.id, body, s.role === 'helper' ? 'helper' : 'company', att);
-    return json({ id }, 201);
+    let whatsapp: unknown;
+    const wantWa = ct.startsWith('multipart/form-data') ? false : !!(await c.body())?.send_whatsapp;
+    if (wantWa && s.role !== 'helper' && body.trim()) {
+      const h = await c.env.DB.prepare('SELECT whatsapp FROM helper_records WHERE id=? AND company_id=?').bind(conv.helper_id, s.companyId).first<any>();
+      whatsapp = await sendWhatsApp(c.env, s.companyId, id, h.whatsapp, body);
+    }
+    return json({ id, whatsapp }, 201);
   });
   r.get('/api/messages/:id/attachment', async (c) => {
     const s = await requirePerm(c.env, c.session, 'messages.use');
@@ -99,16 +130,44 @@ export function messageRoutes(r: Router) {
   r.post('/api/messages/bulk', async (c) => {
     const s = await requirePerm(c.env, c.session, 'messages.use');
     if (s.role === 'helper') throw new HttpError(403, 'forbidden');
-    const v = validate(await c.body(), { helper_ids: { type: 'array', required: true }, body: { type: 'string', required: true, max: 4000 } });
+    const v = validate(await c.body(), { helper_ids: { type: 'array', required: true }, body: { type: 'string', required: true, max: 4000 }, send_whatsapp: { type: 'bool' } });
+    let waSent = 0, waFailed = 0;
     if (v.helper_ids.length > 500) throw new HttpError(422, 'too_many_recipients');
     const ids: string[] = [];
     for (const h of new Set<string>(v.helper_ids)) {
       await owned(c.env, 'helper_records', h, s.companyId);
       const conv = await ensureConversation(c.env, s.companyId, h);
-      ids.push(await insertMessage(c.env, s, conv.id, v.body, 'company'));
+      const mid = await insertMessage(c.env, s, conv.id, v.body, 'company');
+      ids.push(mid);
+      if (v.send_whatsapp) {
+        const hr = await c.env.DB.prepare('SELECT whatsapp FROM helper_records WHERE id=? AND company_id=?').bind(h, s.companyId).first<any>();
+        const r = await sendWhatsApp(c.env, s.companyId, mid, hr.whatsapp, v.body);
+        if (r.status === 'sent') waSent++; else if (r.status === 'failed') waFailed++;
+      }
     }
-    return json({ delivered: ids.length }, 201);
+    return json({ delivered: ids.length, whatsapp: v.send_whatsapp ? { sent: waSent, failed: waFailed } : undefined }, 201);
   });
+  r.get('/api/realtime', async (c) => {
+    const s = await requirePerm(c.env, c.session, 'messages.use');
+    return connectRealtime(c.env, s, c.req);
+  });
+
+  // Optional machine translation (Workers AI). The original message is never modified or stored translated.
+  r.post('/api/messages/:id/translate', async (c) => {
+    const s = await requirePerm(c.env, c.session, 'messages.use');
+    const v = validate(await c.body(), { target: { type: 'enum', values: ['en', 'pt', 'es'], required: true } });
+    const m = await c.env.DB.prepare('SELECT * FROM messages WHERE id=? AND company_id=? AND expires_at>?').bind(c.params.id, s.companyId, nowIso()).first<any>();
+    if (!m) throw new HttpError(404, 'not_found');
+    await resolveConversation(c.env, s, m.conversation_id);
+    if (!c.env.AI) throw new HttpError(503, 'translation_not_configured');
+    let out: any;
+    try { out = await c.env.AI.run('@cf/meta/m2m100-1.2b', { text: m.body, target_lang: v.target }); }
+    catch { throw new HttpError(502, 'translation_failed'); }
+    const text = out?.translated_text ?? out?.result?.translated_text;
+    if (typeof text !== 'string') throw new HttpError(502, 'translation_failed');
+    return json({ translated_text: text, target: v.target, machine_translated: true });
+  });
+
   // Export: a text transcript of currently-active messages. It is generated on demand and not stored server-side,
   // so it never extends retention on our side; the user is told the export is their own copy.
   r.get('/api/conversations/:id/export', async (c) => {

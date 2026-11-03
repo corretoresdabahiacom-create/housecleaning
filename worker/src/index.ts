@@ -6,9 +6,14 @@ import { scheduleRoutes, extendAllRules } from './modules/schedule';
 import { financeRoutes, generateRecurringExpenses } from './modules/finance';
 import { messageRoutes, purgeExpiredMessages } from './modules/messages';
 import { reportRoutes, adminRoutes, recordJob } from './modules/reports';
+import { purgeDeletedCompanies } from './modules/maintenance';
+import { routeRoutes } from './modules/routes';
+import { rotateEncryptedData } from './lib/security';
+
+export { RealtimeHub } from './realtime';
 
 export const router = new Router();
-authRoutes(router); crmRoutes(router); scheduleRoutes(router); financeRoutes(router); messageRoutes(router); reportRoutes(router); adminRoutes(router);
+authRoutes(router); crmRoutes(router); scheduleRoutes(router); financeRoutes(router); messageRoutes(router); reportRoutes(router); adminRoutes(router); routeRoutes(router);
 router.get('/api/health', () => json({ ok: true }), false);
 
 const MAX_BODY = 1_000_000;
@@ -53,7 +58,8 @@ export default {
       const res = await env.ASSETS.fetch(req);
       const h = new Headers(res.headers);
       for (const [k, v] of Object.entries(securityHeaders)) if (k !== 'cache-control') h.set(k, v);
-      h.set('content-security-policy', "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
+      const wsOrigin = url.origin.replace(/^http/, 'ws');
+      h.set('content-security-policy', `default-src 'self'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' ${wsOrigin}; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`);
       return new Response(res.body, { status: res.status, headers: h });
     }
     return new Response('Not found', { status: 404 });
@@ -62,6 +68,8 @@ export default {
     await recordJob(env, 'purge_expired_messages', () => purgeExpiredMessages(env));
     await recordJob(env, 'extend_recurring_appointments', () => extendAllRules(env));
     await recordJob(env, 'recurring_expenses', () => generateRecurringExpenses(env));
+    await recordJob(env, 'purge_deleted_companies', () => purgeDeletedCompanies(env));
+    await recordJob(env, 'reencrypt_old_key_versions', () => rotateEncryptedData(env));
     await recordJob(env, 'prune_rate_limits', () => env.DB.prepare('DELETE FROM rate_limits WHERE window_start < ?').bind(Math.floor(Date.now() / 1000) - 86400).run());
   },
 };

@@ -9,7 +9,8 @@
     "build": "vite build --config web/vite.config.ts",
     "db:migrate:local": "wrangler d1 migrations apply hcm-db --local",
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:e2e": "npm run build && node --test --test-concurrency=1 tests/e2e/ui.e2e.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",

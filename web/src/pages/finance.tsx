@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { centsToInput, fmtMoney, get, post, qs, today } from '../api';
-import { Badge, Bars, Card, Empty, FieldDef, Form, HBars, Loading, Modal, Page, Period, PeriodPicker, Stat, Table, canUi, downloadReport, periodFor, toast, useErr, useLoad, useMe, useT } from '../ui';
+import { Badge, Bars, Card, Empty, FieldDef, Form, HBars, Loading, Modal, Page, Period, PeriodPicker, Stat, Table, canUi, ExportButtons, periodFor, toast, useErr, useLoad, useMe, useT } from '../ui';
 
 const METHODS = ['cash', 'check', 'bank_transfer', 'zelle', 'credit_card_manual', 'other'].map((v) => ({ value: v, label: 'pm_' + v }));
 const usePeriod = () => { const [p, setP] = useState<Period>(() => periodFor('month')); return [p, setP] as const; };
@@ -59,7 +59,6 @@ export function Receivables({ openOnly }: { openOnly?: boolean }) {
   const [status, setStatus] = useState(''); const [sel, setSel] = useState<any>(null); const [adding, setAdding] = useState(false);
   const { data, error, reload } = useLoad(() => get(`/api/finance/receivables?${qs({ status, open: openOnly ? 1 : '' })}`), [status, openOnly]);
   const detail = useLoad(() => (sel ? get(`/api/finance/receivables/${sel.id}`) : Promise.resolve(null)), [sel?.id]);
-  const customers = useLoad(() => get('/api/customers?limit=200'), []);
   return (
     <Page title={openOnly ? t('Accounts Receivable') : t('Revenue and Receipts')} actions={canUi(me, 'financeWrite') && <button className="btn primary" onClick={() => setAdding(true)}>+ {t('New invoice')}</button>}>
       {data && <div className="stats">
@@ -67,7 +66,7 @@ export function Receivables({ openOnly }: { openOnly?: boolean }) {
         <Stat label={t('Due this week')} value={m(data.summary.due_this_week)} /><Stat label={t('Due this month')} value={m(data.summary.due_this_month)} />
         <Stat label={t('Overdue balances')} value={m(data.summary.overdue)} tone={data.summary.overdue ? 'bad' : undefined} />
       </div>}
-      <Card actions={<button className="btn sm ghost" onClick={() => downloadReport('receivables', {})}>CSV</button>}>
+      <Card actions={<ExportButtons name="receivables" params={{}} />}>
         {!openOnly && <div className="row wrap filters"><select value={status} onChange={(e) => setStatus(e.target.value)} aria-label={t('Status')}><option value="">{t('All statuses')}</option>{['pending', 'partially_paid', 'paid', 'canceled', 'written_off'].map((s) => <option key={s} value={s}>{t(s)}</option>)}</select></div>}
         {!data ? <Loading error={error} /> : <Table rows={data.items} onRow={setSel} cols={[
           { key: 'due_date', label: 'Due date' }, { key: 'customer_name', label: 'Customer' }, { key: 'property_name', label: 'Property', hideSm: true },
@@ -91,7 +90,7 @@ export function Receivables({ openOnly }: { openOnly?: boolean }) {
         </>}
       </Modal>}
       {adding && <Modal title={t('New invoice')} onClose={() => setAdding(false)}><Form fields={[
-        { name: 'customer_id', label: 'Customer', type: 'select', required: true, options: (customers.data?.items || []).map((c: any) => ({ value: c.id, label: c.full_name })) },
+        { name: 'customer_id', label: 'Customer', type: 'search', endpoint: '/api/customers', required: true },
         { name: 'description', label: 'Description', required: true }, { name: 'amount', label: 'Amount (USD)', type: 'money', required: true },
         { name: 'revenue_class', label: 'Revenue class', type: 'select', options: ['residential', 'deep', 'move', 'additional', 'other'].map((v) => ({ value: v, label: 'cat_' + v })) },
         { name: 'issue_date', label: 'Issue date', type: 'date', required: true }, { name: 'due_date', label: 'Due date', type: 'date', required: true },
@@ -106,21 +105,20 @@ export function Payables({ kind }: { kind?: 'expense' }) {
   const [f, setF] = useState({ status: '', category_id: '', supplier: '', from: '', to: '' });
   const [adding, setAdding] = useState(false); const [paying, setPaying] = useState<any>(null);
   const cats = useLoad(() => get('/api/finance/categories'), []);
-  const props = useLoad(() => get('/api/properties?limit=200'), []);
   const { data, error, reload } = useLoad(() => get(`/api/finance/payables?${qs({ ...f, kind })}`), [JSON.stringify(f), kind]);
   const [payKey] = useState(() => crypto.randomUUID());
   const expenseFields: FieldDef[] = [
     { name: 'description', label: 'Description', required: true }, { name: 'category_id', label: 'Category', type: 'select', required: true, options: (cats.data?.items || []).filter((c: any) => c.name !== 'Helper labor').map((c: any) => ({ value: c.id, label: c.name })) },
     { name: 'supplier', label: 'Supplier / payee' }, { name: 'amount', label: 'Amount (USD)', type: 'money', required: true },
     { name: 'expense_date', label: 'Expense date', type: 'date', required: true }, { name: 'due_date', label: 'Due date', type: 'date' },
-    { name: 'property_id', label: 'Property (direct allocation, optional)', type: 'select', options: (props.data?.items || []).map((p: any) => ({ value: p.id, label: p.name })) },
+    { name: 'property_id', label: 'Property (direct allocation, optional)', type: 'search', endpoint: '/api/properties', itemLabel: (x: any) => x.name + (x.customer_name ? ` — ${x.customer_name}` : '') },
     { name: 'installments', label: 'Installments', type: 'number' }, { name: 'paid_date', label: 'Paid on (leave blank if unpaid)', type: 'date' },
     { name: 'payment_method', label: 'Payment method', type: 'select', options: METHODS }, { name: 'recurring_monthly', label: 'Recurring monthly', type: 'checkbox' }, { name: 'notes', label: 'Notes', type: 'textarea' },
   ];
   return (
     <Page title={kind ? t('Expenses') : t('Accounts Payable')} actions={canUi(me, 'financeWrite') && <button className="btn primary" onClick={() => setAdding(true)}>+ {t('Add expense')}</button>}>
       {data && <div className="stats"><Stat label={t('Total outstanding')} value={m(data.summary.total_outstanding)} /><Stat label={t('Due in 7 days')} value={m(data.summary.upcoming_7d)} /><Stat label={t('Overdue')} value={m(data.summary.overdue)} tone={data.summary.overdue ? 'bad' : undefined} /></div>}
-      <Card actions={<button className="btn sm ghost" onClick={() => downloadReport('payables', { from: f.from, to: f.to })}>CSV</button>}>
+      <Card actions={<ExportButtons name="payables" params={{ from: f.from, to: f.to }} />}>
         <div className="row wrap filters">
           <select value={f.status} onChange={(e) => setF({ ...f, status: e.target.value })} aria-label={t('Status')}><option value="">{t('All statuses')}</option>{['pending', 'partially_paid', 'paid', 'canceled'].map((s) => <option key={s} value={s}>{t(s)}</option>)}</select>
           <select value={f.category_id} onChange={(e) => setF({ ...f, category_id: e.target.value })} aria-label={t('Category')}><option value="">{t('All categories')}</option>{cats.data?.items.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
@@ -165,8 +163,8 @@ export function HelperPayments() {
           <select value={f.team_id} onChange={(e) => setF({ ...f, team_id: e.target.value })} aria-label={t('Team')}><option value="">{t('All teams')}</option>{teams.data?.items.map((x: any) => <option key={x.id} value={x.id}>{x.name}</option>)}</select>
           <input className="sm" placeholder={t('City')} value={f.city} onChange={(e) => setF({ ...f, city: e.target.value })} aria-label={t('City')} />
           <input className="sm" placeholder={t('State')} value={f.state} onChange={(e) => setF({ ...f, state: e.target.value.toUpperCase() })} aria-label={t('State')} maxLength={2} />
-          <button className="btn sm ghost" onClick={() => downloadReport('helper-payments', { from: p.from, to: p.to, ...f })}>CSV</button>
-          <button className="btn sm ghost" onClick={() => window.print()}>{t('Print / PDF')}</button>
+          <ExportButtons name="helper-payments" params={{ from: p.from, to: p.to, ...f }} />
+          
         </div>
         {!data ? <Loading error={error} /> : <>
           <div className="stats"><Stat label={t('Total amount due')} value={m(data.totals.due_cents)} /><Stat label={t('Amount paid')} value={m(data.totals.paid_cents)} /><Stat label={t('Remaining balance')} value={m(data.totals.due_cents - data.totals.paid_cents)} tone={data.totals.due_cents - data.totals.paid_cents ? 'warn' : 'good'} /></div>
@@ -194,7 +192,7 @@ export function DrePage() {
   return (
     <Page title={t('DRE — Income Statement')} actions={<><PeriodPicker value={p} onChange={setP} />
       <div className="seg">{(['accrual', 'cash'] as const).map((b) => <button key={b} className={basis === b ? 'on' : ''} onClick={() => setBasis(b)}>{t('basis_' + b)}</button>)}</div>
-      <button className="btn sm ghost" onClick={() => downloadReport('dre', { from: p.from, to: p.to, basis })}>CSV</button><button className="btn sm ghost" onClick={() => window.print()}>{t('Print / PDF')}</button></>}>
+      <ExportButtons name="dre" params={{ from: p.from, to: p.to, basis }} /></>}>
       {!d ? <Loading error={error} /> : <Card>
         <div className="basis-tag">{t('Basis')}: <b>{t('basis_' + d.basis)}</b> · {d.from} → {d.to}</div>
         <table className="dre"><tbody>
@@ -251,7 +249,7 @@ export function Profitability() {
   }
   return (
     <Page title={t('Property Profitability')} actions={<><PeriodPicker value={p} onChange={setP} /><div className="seg">{(['property', 'customer'] as const).map((b) => <button key={b} className={by === b ? 'on' : ''} onClick={() => setBy(b)}>{t(b === 'property' ? 'By property' : 'By customer')}</button>)}</div>
-      <button className="btn sm ghost" onClick={() => downloadReport('profitability', { from: p.from, to: p.to })}>CSV</button></>}>
+      <ExportButtons name="profitability" params={{ from: p.from, to: p.to }} /></>}>
       <Card>
         <p className="muted small">{t('Gross contribution = net revenue − helper labor − direct supplies − other directly allocated expenses. It is NOT net profit: indirect company expenses are not allocated.')}</p>
         {!data ? <Loading error={error} /> : <Table rows={rows.sort((a, b) => b.gross_contribution - a.gross_contribution)} cols={[

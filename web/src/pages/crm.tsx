@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { centsToInput, fmtMoney, get, mapsUrl, post, put, qs, waUrl } from '../api';
+import { api, centsToInput, del, fmtMoney, get, mapsUrl, post, put, qs, waUrl } from '../api';
 import { Badge, Card, Empty, Form, FieldDef, Loading, Modal, Page, Table, canUi, toast, useErr, useLoad, useMe, useT } from '../ui';
 import { LANG_OPTIONS, STATE_OPTIONS } from './auth';
 import { AppointmentForm } from './schedule';
@@ -80,8 +80,8 @@ export function CustomerDetail({ id }: { id: string }) {
   );
 }
 
-const propertyFields = (customers: any[]): FieldDef[] => [
-  { name: 'customer_id', label: 'Customer responsible', type: 'select', options: customers.map((c) => ({ value: c.id, label: c.full_name })), required: true },
+const propertyFields = (): FieldDef[] => [
+  { name: 'customer_id', label: 'Customer responsible', type: 'search', endpoint: '/api/customers', required: true },
   { name: 'name', label: 'Property name / identification', required: true },
   { name: 'street', label: 'Street address', required: true }, { name: 'unit', label: 'Apt / suite / unit' },
   { name: 'city', label: 'City', required: true }, { name: 'state', label: 'State', type: 'select', options: STATE_OPTIONS, required: true },
@@ -98,10 +98,8 @@ const propertyFields = (customers: any[]): FieldDef[] => [
 
 export function PropertyForm({ initial = {}, id, onDone, onCancel }: { initial?: any; id?: string; onDone: (id: string) => void; onCancel: () => void }) {
   const { t } = useT();
-  const { data } = useLoad(() => get('/api/customers?limit=200'), []);
-  if (!data) return <Loading />;
   const init = { status: 'active', pricing_model: 'fixed', frequency: 'weekly', ...initial, price: initial.price_cents !== undefined ? centsToInput(initial.price_cents) : initial.price };
-  return <Form fields={propertyFields(data.items)} initial={init} onCancel={onCancel} onSubmit={async (v) => {
+  return <Form fields={propertyFields()} initial={init} onCancel={onCancel} onSubmit={async (v) => {
     if (id) { await put(`/api/properties/${id}`, v); toast(t('Saved')); onDone(id); }
     else { const r = await post('/api/properties', v); toast(t('Saved')); onDone(r.id); }
   }} />;
@@ -168,6 +166,7 @@ export function PropertyDetail({ id }: { id: string }) {
             {(p.bedrooms ?? p.bathrooms) !== null && <><dt>{t('Bedrooms')} / {t('Bathrooms')}</dt><dd>{p.bedrooms ?? '—'} / {p.bathrooms ?? '—'}</dd></>}
             {p.pets && <><dt>{t('Pets present')}</dt><dd>{p.pets}</dd></>}
             {p.parking && <><dt>{t('Parking information')}</dt><dd>{p.parking}</dd></>}
+            <dt>{t('Coordinates')}</dt><dd>{p.latitude !== null ? `${p.latitude.toFixed(5)}, ${p.longitude.toFixed(5)}` : '—'} {canUi(me, 'write') && <button className="link small" onClick={async () => { try { const r = await post(`/api/properties/${id}/geocode`); toast(`${t('Located')}: ${r.matched_address}`); reload(); } catch (e) { onErr(e); } }}>{t('Locate address')}</button>}</dd>
           </dl>
           {p.special_instructions && <p className="note">{p.special_instructions}</p>}
           {p.private_notes && <p className="note private">🔒 {p.private_notes}</p>}
@@ -187,6 +186,7 @@ export function PropertyDetail({ id }: { id: string }) {
           </Card>
         </div>
       </div>
+      <PhotosCard propertyId={id} canEdit={canUi(me, 'write')} />
       <Card title={t('Cleaning history')} actions={history.data?.next && <span className="muted">{t('Next cleaning')}: {history.data.next.date} {history.data.next.start_time}</span>}>
         {!history.data ? <Loading /> : <Table rows={history.data.items} onRow={(r) => (location.hash = `/calendar?appointment=${r.id}`)} cols={[
           { key: 'date', label: 'Date', render: (r) => `${r.date} ${r.start_time}` }, { key: 'service_name', label: 'Cleaning type', hideSm: true },
@@ -204,6 +204,22 @@ export function PropertyDetail({ id }: { id: string }) {
       {modal === 'schedule' && <Modal title={t('Schedule cleaning')} onClose={close}><AppointmentForm propertyId={id} onDone={() => { close(); history.reload(); }} /></Modal>}
     </Page>
   );
+}
+
+function PhotosCard({ propertyId, canEdit }: { propertyId: string; canEdit: boolean }) {
+  const { t } = useT(); const onErr = useErr();
+  const { data, reload } = useLoad(() => get(`/api/properties/${propertyId}/photos`), [propertyId]);
+  const [busy, setBusy] = useState(false);
+  return <Card title={t('Photos')} actions={canEdit && <label className="btn sm">{busy ? t('Saving…') : '+ ' + t('Add photo')}<input type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={async (e) => {
+    const f = e.target.files?.[0]; if (!f) return; setBusy(true);
+    try { const fd = new FormData(); fd.set('file', f); await api(`/api/properties/${propertyId}/photos`, { method: 'POST', form: fd }); reload(); } catch (er) { onErr(er); } finally { setBusy(false); e.target.value = ''; }
+  }} /></label>}>
+    {data?.items.length ? <div className="photos">{data.items.map((ph: any) => <div key={ph.id} className="photo">
+      <a href={`/api/photos/${ph.id}`} target="_blank" rel="noopener"><img src={`/api/photos/${ph.id}`} alt={ph.caption || t('Property photo')} loading="lazy" /></a>
+      {ph.caption && <small>{ph.caption}</small>}
+      {canEdit && <button className="btn sm danger" aria-label={t('Delete')} onClick={async () => { if (confirm(t('Delete this photo?'))) { await del(`/api/photos/${ph.id}`); reload(); } }}>✕</button>}
+    </div>)}</div> : <Empty>{t('No photos.')}</Empty>}
+  </Card>;
 }
 
 function RuleRow({ r, onChange }: { r: any; onChange: () => void }) {

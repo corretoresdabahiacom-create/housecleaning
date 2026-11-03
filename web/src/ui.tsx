@@ -89,8 +89,8 @@ export function Modal({ title, onClose, children }: { title: string; onClose: ()
 
 // ───────── Declarative form ─────────
 export type FieldDef = {
-  name: string; label: string; type?: 'text' | 'email' | 'tel' | 'number' | 'money' | 'date' | 'time' | 'select' | 'textarea' | 'checkbox' | 'password';
-  options?: { value: string; label: string }[]; required?: boolean; full?: boolean; placeholder?: string; help?: string;
+  name: string; label: string; type?: 'text' | 'email' | 'tel' | 'number' | 'money' | 'date' | 'time' | 'select' | 'textarea' | 'checkbox' | 'password' | 'search';
+  options?: { value: string; label: string }[]; endpoint?: string; itemLabel?: (x: any) => string; required?: boolean; full?: boolean; placeholder?: string; help?: string;
 };
 export function Form({ fields, initial = {}, onSubmit, submitLabel, onCancel }: { fields: FieldDef[]; initial?: Record<string, any>; onSubmit: (v: Record<string, any>) => Promise<void> | void; submitLabel?: string; onCancel?: () => void }) {
   const { t } = useT();
@@ -116,7 +116,9 @@ export function Form({ fields, initial = {}, onSubmit, submitLabel, onCancel }: 
         {fields.map((f) => (
           <label key={f.name} className={`field ${f.full || f.type === 'textarea' ? 'full' : ''} ${f.type === 'checkbox' ? 'check' : ''}`}>
             {f.type !== 'checkbox' && <span>{t(f.label)}{f.required && <b className="req"> *</b>}</span>}
-            {f.type === 'select' ? (
+            {f.type === 'search' ? (
+              <SearchSelect endpoint={f.endpoint!} value={v[f.name] ?? ''} onChange={(id) => set(f.name, id)} label={f.itemLabel || ((x) => x.full_name || x.name)} required={f.required} />
+            ) : f.type === 'select' ? (
               <select value={v[f.name] ?? ''} required={f.required} onChange={(e) => set(f.name, e.target.value)}>
                 <option value="">—</option>
                 {f.options!.map((o) => <option key={o.value} value={o.value}>{t(o.label)}</option>)}
@@ -224,7 +226,58 @@ export function HBars({ data, format }: { data: { name: string; v: number }[]; f
   return <div className="hbars">{data.map((d) => <div key={d.name} className="hbar"><span className="hbar-n">{d.name}</span><span className="hbar-t"><i style={{ width: `${(d.v / max) * 100}%` }} /></span><span className="hbar-v">{format(d.v)}</span></div>)}</div>;
 }
 
-export function downloadReport(name: string, params: Record<string, string>) {
-  const q = new URLSearchParams({ ...params, format: 'csv' });
-  const a = document.createElement('a'); a.href = `/api/reports/${name}?${q}`; a.rel = 'noopener'; a.click();
+export function downloadReport(name: string, params: Record<string, string>, format: 'csv' | 'xlsx' | 'pdf' = 'csv') {
+  const q = new URLSearchParams({ ...Object.fromEntries(Object.entries(params).filter(([, v]) => v)), format });
+  const a = document.createElement('a'); a.href = `/api/reports/${name}?${q}`; a.rel = 'noopener'; a.download = '';
+  document.body.appendChild(a); a.click(); a.remove();
+}
+/** CSV · XLSX · PDF buttons for a report. */
+export function ExportButtons({ name, params }: { name: string; params: Record<string, string> }) {
+  return <span className="row">{(['pdf', 'xlsx', 'csv'] as const).map((f) => <button key={f} type="button" className="btn sm ghost" onClick={() => downloadReport(name, params, f)}>{f.toUpperCase()}</button>)}</span>;
+}
+
+/**
+ * Autocomplete select backed by a server search endpoint (no 200-record limit).
+ * `endpoint` must accept ?q= and return { items }; `label` renders an item.
+ */
+export function SearchSelect({ endpoint, value, onChange, label, placeholder, required, extraQuery = '' }: {
+  endpoint: string; value: string; onChange: (id: string, item?: any) => void; label: (x: any) => string; placeholder?: string; required?: boolean; extraQuery?: string;
+}) {
+  const { t } = useT();
+  const [q, setQ] = useState('');
+  const [items, setItems] = useState<any[]>([]);
+  const [open, setOpen] = useState(false);
+  const [selected, setSelected] = useState<any>(null);
+  const [active, setActive] = useState(0);
+  const listId = React.useId();
+  useEffect(() => {
+    if (!value) { setSelected(null); return; }
+    if (selected?.id === value) return;
+    fetch(`${endpoint.split('?')[0]}/${value}`, { credentials: 'same-origin' }).then((r) => (r.ok ? r.json() : null)).then((d: any) => d && setSelected(d.customer || d.property || d.helper || d)).catch(() => {});
+  }, [value]);
+  useEffect(() => {
+    if (!open) return;
+    const h = setTimeout(() => {
+      const sep = endpoint.includes('?') ? '&' : '?';
+      fetch(`${endpoint}${sep}q=${encodeURIComponent(q)}&limit=20${extraQuery}`, { credentials: 'same-origin' }).then((r) => r.json()).then((d: any) => { setItems(d.items || []); setActive(0); }).catch(() => setItems([]));
+    }, 200);
+    return () => clearTimeout(h);
+  }, [q, open, endpoint, extraQuery]);
+  const pick = (x: any) => { setSelected(x); onChange(x.id, x); setOpen(false); setQ(''); };
+  return (
+    <div className="combo">
+      <input role="combobox" aria-expanded={open} aria-controls={listId} aria-autocomplete="list" required={required && !value}
+        value={open ? q : selected ? label(selected) : ''} placeholder={placeholder || t('Type to search…')}
+        onFocus={() => setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 150)} onChange={(e) => { setQ(e.target.value); setOpen(true); }}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowDown') { e.preventDefault(); setActive((a) => Math.min(items.length - 1, a + 1)); }
+          else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((a) => Math.max(0, a - 1)); }
+          else if (e.key === 'Enter' && open && items[active]) { e.preventDefault(); pick(items[active]); }
+          else if (e.key === 'Escape') setOpen(false);
+        }} />
+      {open && <ul className="combo-list" id={listId} role="listbox">
+        {items.length === 0 ? <li className="muted">{t('No matches')}</li> : items.map((x, i) => <li key={x.id} role="option" aria-selected={i === active} className={i === active ? 'on' : ''} onMouseDown={(e) => { e.preventDefault(); pick(x); }}>{label(x)}</li>)}
+      </ul>}
+    </div>
+  );
 }

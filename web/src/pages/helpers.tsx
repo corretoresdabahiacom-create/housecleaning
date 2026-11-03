@@ -40,7 +40,6 @@ export function HelperDetail({ id }: { id: string }) {
   const { t } = useT(); const { me } = useMe(); const onErr = useErr();
   const { data, error, reload } = useLoad(() => get(`/api/helpers/${id}`), [id]);
   const notes = useLoad(() => (canUi(me, 'private') ? get(`/api/helpers/${id}/notes`) : Promise.resolve({ items: [] })), [id]);
-  const props = useLoad(() => get('/api/properties?limit=200'), []);
   const [modal, setModal] = useState<null | 'edit' | 'note' | 'rate'>(null);
   if (!data) return <Loading error={error} />;
   const h = data.helper;
@@ -72,7 +71,7 @@ export function HelperDetail({ id }: { id: string }) {
       </Card>
       {modal === 'edit' && <Modal title={t('Edit')} onClose={() => setModal(null)}><Form fields={helperFields} initial={{ ...h, default_rate: centsToInput(h.default_rate_cents), favorite: !!h.favorite }} onCancel={() => setModal(null)} onSubmit={async (v) => { await put(`/api/helpers/${id}`, v); toast(t('Saved')); setModal(null); reload(); }} /></Modal>}
       {modal === 'note' && <Modal title={t('Private notes & evaluations')} onClose={() => setModal(null)}><Form fields={[{ name: 'kind', label: 'Type', type: 'select', options: [{ value: 'note', label: 'Note' }, { value: 'evaluation', label: 'Evaluation' }], required: true }, { name: 'rating', label: 'Rating (1–5)', type: 'number' }, { name: 'body', label: 'Text', type: 'textarea', required: true }]} initial={{ kind: 'note' }} onCancel={() => setModal(null)} onSubmit={async (v) => { await post(`/api/helpers/${id}/notes`, v); setModal(null); notes.reload(); }} /></Modal>}
-      {modal === 'rate' && <Modal title={t('Negotiated rates by property')} onClose={() => setModal(null)}><Form fields={[{ name: 'property_id', label: 'Property', type: 'select', required: true, options: (props.data?.items || []).map((p: any) => ({ value: p.id, label: p.name })) }, { name: 'pay_basis', label: 'Payment basis', type: 'select', options: BASIS, required: true }, { name: 'rate', label: 'Rate (USD)', type: 'money', required: true }]} initial={{ pay_basis: 'fixed' }} onCancel={() => setModal(null)} onSubmit={async (v) => { await put(`/api/helpers/${id}/rates`, v); toast(t('Saved')); setModal(null); reload(); }} /></Modal>}
+      {modal === 'rate' && <Modal title={t('Negotiated rates by property')} onClose={() => setModal(null)}><Form fields={[{ name: 'property_id', label: 'Property', type: 'search', endpoint: '/api/properties', required: true, itemLabel: (x: any) => x.name + (x.customer_name ? ` — ${x.customer_name}` : '') }, { name: 'pay_basis', label: 'Payment basis', type: 'select', options: BASIS, required: true }, { name: 'rate', label: 'Rate (USD)', type: 'money', required: true }]} initial={{ pay_basis: 'fixed' }} onCancel={() => setModal(null)} onSubmit={async (v) => { await put(`/api/helpers/${id}/rates`, v); toast(t('Saved')); setModal(null); reload(); }} /></Modal>}
     </Page>
   );
 }

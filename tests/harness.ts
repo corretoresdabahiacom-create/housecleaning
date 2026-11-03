@@ -3,13 +3,14 @@
 import { createRequire } from 'node:module';
 const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite');
 type DatabaseSync = any;
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { handleApi } from '../worker/src/index';
 import type { D1Like, Env, R2Like } from '../worker/src/lib/core';
 
 export function makeDb(): D1Like & { raw: DatabaseSync } {
   const db = new DatabaseSync(':memory:');
-  db.exec(readFileSync(new URL('../migrations/0001_init.sql', import.meta.url), 'utf8'));
+  const dir = new URL('../migrations/', import.meta.url);
+  for (const f of readdirSync(dir).filter((x) => x.endsWith('.sql')).sort()) db.exec(readFileSync(new URL(f, dir), 'utf8'));
   const stmt = (sql: string, args: unknown[] = []): any => ({
     sql, args,
     bind: (...v: unknown[]) => stmt(sql, v),

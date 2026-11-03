@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ApiError, addDays, centsToInput, del, fmtMoney, get, mapsUrl, post, put, qs, today, waUrl } from '../api';
-import { Badge, Card, Empty, Loading, Modal, Page, canUi, toast, useErr, useLoad, useMe, useT } from '../ui';
+import { Badge, Card, Empty, Loading, Modal, Page, SearchSelect, canUi, toast, useErr, useLoad, useMe, useT } from '../ui';
+const propLabel = (x: any) => x.name + (x.customer_name ? ` — ${x.customer_name}` : '');
 import { STATE_OPTIONS } from './auth';
 
 const STATUSES = ['scheduled', 'confirmed', 'pending_confirmation', 'in_progress', 'completed', 'canceled', 'rescheduled', 'customer_unavailable'];
@@ -25,7 +26,7 @@ export function CalendarPage({ initial }: { initial: Record<string, string> }) {
   const r = range(view, anchor);
   const { data, error, reload } = useLoad(() => get(`/api/appointments?${qs({ ...r, ...f })}`), [r.from, r.to, JSON.stringify(f)]);
   const helpers = useLoad(() => get('/api/helpers'), []); const teams = useLoad(() => get('/api/teams'), []);
-  const services = useLoad(() => get('/api/services'), []); const props = useLoad(() => get('/api/properties?limit=200'), []);
+  const services = useLoad(() => get('/api/services'), []);
   const step = (n: number) => setAnchor(view === 'day' ? addDays(anchor, n) : view === 'week' ? addDays(anchor, 7 * n) : (() => { const d = new Date(anchor + 'T00:00:00Z'); d.setUTCMonth(d.getUTCMonth() + n, 1); return d.toISOString().slice(0, 10); })());
   const set = (k: string) => (e: any) => setF({ ...f, [k]: e.target.value });
   const fmtDay = (d: string, o: Intl.DateTimeFormatOptions) => new Date(d + 'T12:00:00Z').toLocaleDateString(lang === 'pt' ? 'pt-BR' : lang === 'es' ? 'es-US' : 'en-US', { timeZone: 'UTC', ...o });
@@ -52,7 +53,8 @@ export function CalendarPage({ initial }: { initial: Record<string, string> }) {
           <div className="row wrap filters">
             <select value={f.helper_id} onChange={set('helper_id')} aria-label={t('Helper')}><option value="">{t('All helpers')}</option>{helpers.data?.items.map((h: any) => <option key={h.id} value={h.id}>{h.full_name}</option>)}</select>
             <select value={f.team_id} onChange={set('team_id')} aria-label={t('Team')}><option value="">{t('All teams')}</option>{teams.data?.items.map((h: any) => <option key={h.id} value={h.id}>{h.name}</option>)}</select>
-            <select value={f.property_id} onChange={set('property_id')} aria-label={t('Property')}><option value="">{t('All properties')}</option>{props.data?.items.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
+            <span className="combo-sm"><SearchSelect endpoint="/api/properties" value={f.property_id} onChange={(id) => setF({ ...f, property_id: id })} label={propLabel} placeholder={t('All properties')} /></span>
+            {f.property_id && <button className="btn sm ghost" onClick={() => setF({ ...f, property_id: '' })} aria-label={t('Clear')}>✕</button>}
             <select value={f.service_id} onChange={set('service_id')} aria-label={t('Service')}><option value="">{t('All services')}</option>{services.data?.items.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}</select>
             <input placeholder={t('City')} value={f.city} onChange={set('city')} aria-label={t('City')} className="sm" />
             <select value={f.state} onChange={set('state')} aria-label={t('State')}><option value="">{t('State')}</option>{STATE_OPTIONS.map((o) => <option key={o.value}>{o.value}</option>)}</select>
@@ -78,6 +80,7 @@ export function CalendarPage({ initial }: { initial: Record<string, string> }) {
           </div>
         )}
       </Card>
+      {view === 'day' && items.length > 1 && <RoutePanel date={anchor} helperId={f.helper_id} />}
       {open && <AppointmentModal id={open} onClose={() => setOpen(null)} onChange={reload} />}
       {creating && <Modal title={t('Schedule cleaning')} onClose={() => setCreating(null)}><AppointmentForm date={creating} propertyId={f.property_id || undefined} onDone={() => { setCreating(null); reload(); }} /></Modal>}
     </Page>
@@ -91,7 +94,6 @@ function ConflictNote({ conflicts }: { conflicts: any[] }) {
 
 export function AppointmentForm({ propertyId, date, onDone }: { propertyId?: string; date?: string; onDone: () => void }) {
   const { t } = useT(); const onErr = useErr();
-  const props = useLoad(() => get('/api/properties?status=active&limit=200'), []);
   const services = useLoad(() => get('/api/services'), []);
   const helpers = useLoad(() => get('/api/helpers'), []);
   const [v, setV] = useState<any>({ property_id: propertyId || '', date: date || today(), start_time: '09:00', status: 'scheduled' });
@@ -106,10 +108,10 @@ export function AppointmentForm({ propertyId, date, onDone }: { propertyId?: str
       const r = await post('/api/appointments', body); toast(t('Saved')); if (r.warnings?.length) toast(t('Saved with scheduling conflict warning'), 'err'); onDone();
     } catch (e) { if (e instanceof ApiError && e.code === 'schedule_conflict') setConflicts(e.details); else onErr(e); }
   };
-  if (!props.data || !helpers.data) return <Loading />;
+  if (!helpers.data) return <Loading />;
   return <form className="form" onSubmit={(e) => { e.preventDefault(); submit(false); }}>
     <div className="grid2">
-      <label className="field full"><span>{t('Property')} *</span><select required value={v.property_id} onChange={(e) => set('property_id', e.target.value)}><option value="">—</option>{props.data.items.map((p: any) => <option key={p.id} value={p.id}>{p.name} — {p.customer_name}</option>)}</select></label>
+      <div className="field full"><span>{t('Property')} *</span><SearchSelect endpoint="/api/properties" extraQuery="&status=active" value={v.property_id} onChange={(id) => set('property_id', id)} label={propLabel} required /></div>
       <label className="field"><span>{t('Service')}</span><select value={v.service_id || ''} onChange={(e) => set('service_id', e.target.value)}><option value="">—</option>{services.data?.items.filter((s: any) => s.active).map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
       <label className="field"><span>{t('Price charged (blank = negotiated price)')}</span><input inputMode="decimal" pattern="\d+(\.\d{1,2})?" value={v.price || ''} onChange={(e) => set('price', e.target.value)} placeholder="0.00" /></label>
       <label className="field"><span>{t('Date')} *</span><input type="date" required value={v.date} onChange={(e) => set('date', e.target.value)} /></label>
@@ -192,3 +194,19 @@ export function AppointmentModal({ id, onClose, onChange }: { id: string; onClos
   );
 }
 export { centsToInput };
+
+function RoutePanel({ date, helperId }: { date: string; helperId: string }) {
+  const { t } = useT();
+  const { data } = useLoad(() => get(`/api/routes/day?${qs({ date, helper_id: helperId })}`), [date, helperId]);
+  if (!data) return null;
+  const byId = Object.fromEntries(data.stops.map((s: any) => [s.id, s]));
+  const saves = data.straight_line_miles.scheduled - data.straight_line_miles.suggested;
+  return <Card title={t('Route suggestion')} actions={data.google_maps_directions && <a className="btn sm primary" href={data.google_maps_directions} target="_blank" rel="noopener noreferrer">{t('Open route in Google Maps')}</a>}>
+    {data.suggested_order.length < 2 ? <p className="muted">{t('Locate at least two addresses (property page → Locate address) to get a route suggestion.')}</p> : <>
+      <ol className="route-list">{data.suggested_order.map((id: string) => <li key={id}><b>{byId[id].property_name}</b> <span className="muted">· {t('scheduled')} {byId[id].start_time} · {byId[id].address}</span></li>)}</ol>
+      <p className="small">{t('Straight-line distance')}: {data.straight_line_miles.suggested} mi {saves > 0.05 ? `(${t('current order')}: ${data.straight_line_miles.scheduled} mi)` : `· ${t('current order is already the shortest found')}`}</p>
+    </>}
+    {data.missing_coordinates.length > 0 && <p className="small muted">{t('{n} stops without coordinates are not included.', { n: data.missing_coordinates.length })}</p>}
+    <p className="small muted">{t('Order suggested by straight-line distance only — not driving distance, traffic or travel time. Google Maps calculates the actual route.')}</p>
+  </Card>;
+}

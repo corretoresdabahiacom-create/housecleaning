@@ -1,7 +1,7 @@
 # Test execution report
 
 **Date:** 2026-11-03 · **Runner:** Vitest (latest) on Node 22.23 · **Command:** `npm test`
-**Result:** 2 files, **29 tests, 29 passed, 0 failed.**
+**Result:** 5 files, **45 tests, 45 passed, 0 failed** (`npm test`) · browser E2E **5 tests, 5 passed** on 3 consecutive runs (`npm run test:e2e`).
 
 ## How the tests run
 
@@ -34,9 +34,29 @@ In addition, the app was run on the actual Workers runtime (`wrangler dev`, work
 - `npm audit` — **0 vulnerabilities** after upgrading dev tooling (Wrangler 4, Vite 7, Vitest latest).
 - i18n coverage script — every UI string has PT and ES translations (only the language names themselves are intentionally untranslated).
 
+## Round 2 additions
+
+| Area | Tests |
+|---|---|
+| TOTP | RFC 6238 SHA-1 test vectors; base32 round-trip |
+| MFA flow | setup, encrypted secret, enable with code, login requires code, replay rejected, single-use challenge, recovery code single use, 5-attempt cap, disable with password |
+| Turnstile | required/failed/passed, siteverify URL, disabled when not configured |
+| Purge | data kept during retention; after it, all tenant rows, R2 files and orphan users removed; other tenant intact; idempotent |
+| Key rotation | old data readable with previous key, re-encrypted to new version, readable after old key removed |
+| Time zone | validation and permission |
+| Exports | XLSX zip/CRC and exact money values (validated with openpyxl), PDF structure and pagination (validated with pypdf) |
+| Realtime | DO routes events to staff and the matching helper only; API notifies hub; role taken from session |
+| Translation | Workers AI call shape, original preserved, cross-tenant 404 |
+| WhatsApp | disabled unless configured and enabled, Graph API request shape, failure logged without blocking |
+| Photos | upload, type sniffing, tenant isolation, deletion from storage |
+| Routes | haversine, nearest-neighbor, coordinate validation, Census geocoder request |
+| Plans | admin-only, property and user limits (402), assignment |
+| i18n | every UI string has PT and ES translations |
+| Browser E2E | register → customer → residence (autocomplete) → helper → schedule (autocomplete) → complete → finance figures → PDF/XLSX download; EN/PT/ES switch; real-time chat between owner and helper (< 5 s); MFA enable and login; mobile drawer and no horizontal overflow |
+
 ## Not covered by automated tests
 
-- Browser-level end-to-end tests (UI flows were checked manually via the running app and screenshots, not with an automated E2E suite).
 - Load/performance testing and D1 limits under concurrency.
 - Real email delivery (no provider configured).
+- Live calls to Turnstile, Meta WhatsApp, Workers AI and the Census geocoder (mocked in tests).
 - Deployed staging environment (not deployed).

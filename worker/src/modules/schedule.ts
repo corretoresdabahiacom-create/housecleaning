@@ -1,4 +1,4 @@
-import { Env, HttpError, Router, Session, hourlyAmount, json, nowIso, todayIso, uid, validate } from '../lib/core';
+import { Env, HttpError, Router, Session, hourlyAmount, json, nowIso, todayIn, uid, validate } from '../lib/core';
 import { occurrences, overlaps } from '../lib/recurrence';
 import { audit, owned, requirePerm } from '../lib/security';
 import { helperLaborCategory } from './seed';
@@ -155,7 +155,7 @@ async function completeAppointment(env: Env, s: Session, a: any, attendanceIn: a
 export function scheduleRoutes(r: Router) {
   r.get('/api/appointments', async (c) => {
     const s = await requirePerm(c.env, c.session, 'schedule.read');
-    const from = c.query.get('from') || todayIso(); const to = c.query.get('to') || addDays(from, 7);
+    const from = c.query.get('from') || todayIn(s.timezone); const to = c.query.get('to') || addDays(from, 7);
     if (Date.parse(to) - Date.parse(from) > 400 * 864e5) throw new HttpError(422, 'range_too_large');
     const where = ['a.company_id=?', 'a.date>=?', 'a.date<=?']; const args: any[] = [s.companyId, from, to];
     for (const [q, col] of [['customer_id', 'a.customer_id'], ['property_id', 'a.property_id'], ['service_id', 'a.service_id'], ['status', 'a.status'], ['city', 'p.city'], ['state', 'p.state']] as const) {
@@ -332,8 +332,8 @@ export function scheduleRoutes(r: Router) {
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(id, s.companyId, v.property_id, v.service_id ?? null, v.frequency, v.interval_days ?? null, v.weekdays ?? null, v.start_date, v.end_date ?? null,
       v.start_time, v.duration_minutes, v.paused_from ?? null, v.paused_until ?? null, v.exceptions ?? null, v.active ?? 1, now, now).run();
     const rule = await owned(c.env, 'recurring_service_rules', id, s.companyId);
-    const from = v.start_date > todayIso() ? v.start_date : todayIso();
-    const created = await generateForRule(c.env, s, rule, from, addDays(todayIso(), HORIZON_DAYS));
+    const from = v.start_date > todayIn(s.timezone) ? v.start_date : todayIn(s.timezone);
+    const created = await generateForRule(c.env, s, rule, from, addDays(todayIn(s.timezone), HORIZON_DAYS));
     await audit(c.env, s, 'create', 'recurring_rule', id, { created });
     return json({ id, generated: created }, 201);
   });
@@ -348,10 +348,10 @@ export function scheduleRoutes(r: Router) {
     const cols = Object.keys(v);
     if (!cols.length) throw new HttpError(422, 'nothing_to_update');
     await c.env.DB.prepare(`UPDATE recurring_service_rules SET ${cols.map((x) => `${x}=?`).join(',')}, version=version+1, updated_at=? WHERE id=? AND company_id=?`).bind(...Object.values(v), nowIso(), old.id, s.companyId).run();
-    const from = c.query.get('effective_from') && /^\d{4}-\d{2}-\d{2}$/.test(c.query.get('effective_from')!) && c.query.get('effective_from')! > todayIso() ? c.query.get('effective_from')! : todayIso();
+    const from = c.query.get('effective_from') && /^\d{4}-\d{2}-\d{2}$/.test(c.query.get('effective_from')!) && c.query.get('effective_from')! > todayIn(s.timezone) ? c.query.get('effective_from')! : todayIn(s.timezone);
     await purgeFutureGenerated(c.env, s.companyId, old.id, from);
     const rule = await owned(c.env, 'recurring_service_rules', old.id, s.companyId);
-    const created = await generateForRule(c.env, s, rule, from, addDays(todayIso(), HORIZON_DAYS));
+    const created = await generateForRule(c.env, s, rule, from, addDays(todayIn(s.timezone), HORIZON_DAYS));
     await audit(c.env, s, 'update', 'recurring_rule', old.id, { fields: cols, regenerated: created });
     return json({ ok: true, regenerated: created });
   });
@@ -359,18 +359,18 @@ export function scheduleRoutes(r: Router) {
   r.post('/api/rules/:id/generate', async (c) => {
     const s = await requirePerm(c.env, c.session, 'schedule.write');
     const rule = await owned(c.env, 'recurring_service_rules', c.params.id, s.companyId);
-    const created = await generateForRule(c.env, s, rule, todayIso(), addDays(todayIso(), HORIZON_DAYS));
+    const created = await generateForRule(c.env, s, rule, todayIn(s.timezone), addDays(todayIn(s.timezone), HORIZON_DAYS));
     return json({ generated: created });
   });
 }
 
 /** Cron: extend horizon for all active rules of active companies (idempotent). */
 export async function extendAllRules(env: Env) {
-  const { results } = await env.DB.prepare(`SELECT r.*, c.currency FROM recurring_service_rules r JOIN companies c ON c.id=r.company_id WHERE r.active=1 AND c.status='active'`).all<any>();
+  const { results } = await env.DB.prepare(`SELECT r.*, c.currency, c.timezone FROM recurring_service_rules r JOIN companies c ON c.id=r.company_id WHERE r.active=1 AND c.status='active'`).all<any>();
   let total = 0;
   for (const rule of results) {
-    const s = { userId: 'system', companyId: rule.company_id, currency: rule.currency } as Session;
-    total += await generateForRule(env, s, rule, todayIso(), addDays(todayIso(), HORIZON_DAYS));
+    const s = { userId: 'system', companyId: rule.company_id, currency: rule.currency, timezone: rule.timezone } as Session;
+    total += await generateForRule(env, s, rule, todayIn(s.timezone), addDays(todayIn(s.timezone), HORIZON_DAYS));
   }
   return total;
 }

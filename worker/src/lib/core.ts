@@ -19,7 +19,16 @@ export interface R2Like {
 export interface Env {
   DB: D1Like;
   FILES?: R2Like;
-  ENCRYPTION_KEY: string;      // base64 32 bytes, used for access instructions (secret)
+  ENCRYPTION_KEY: string;      // base64 32 bytes, current key (secret)
+  ENCRYPTION_KEY_VERSION?: string;   // integer version of ENCRYPTION_KEY (default "1")
+  ENCRYPTION_KEY_PREVIOUS?: string;  // previous key during rotation (secret)
+  TURNSTILE_SECRET?: string;   // enables bot protection on auth endpoints (secret)
+  TURNSTILE_SITE_KEY?: string; // public site key exposed to the UI
+  WHATSAPP_TOKEN?: string;     // WhatsApp Cloud API access token (secret)
+  WHATSAPP_PHONE_NUMBER_ID?: string;
+  AI?: { run(model: string, input: unknown): Promise<any> };   // Workers AI binding (translation)
+  REALTIME?: { idFromName(n: string): any; get(id: any): { fetch(r: Request): Promise<Response> } };  // Durable Object namespace
+  PURGE_AFTER_DAYS?: string;   // retention before hard purge of deleted companies (default 30)
   APP_ENV?: string;            // 'development' | 'staging' | 'production'
   APP_ORIGIN?: string;
 }
@@ -32,6 +41,7 @@ export interface Session {
   isPlatformAdmin: boolean;
   sessionId: string;
   currency: string;
+  timezone?: string;
 }
 
 export type Role = 'owner' | 'admin' | 'manager' | 'scheduler' | 'finance' | 'helper';
@@ -58,6 +68,11 @@ export const securityHeaders: Record<string, string> = {
 export const uid = () => crypto.randomUUID();
 export const nowIso = () => new Date().toISOString();
 export const todayIso = () => new Date().toISOString().slice(0, 10);
+/** Current calendar date in an IANA time zone (company-local scheduling dates). */
+export const todayIn = (tz?: string | null) => {
+  try { return new Intl.DateTimeFormat('en-CA', { timeZone: tz || 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()); }
+  catch { return todayIso(); }
+};
 
 // ───────── Router ─────────
 export interface Ctx {

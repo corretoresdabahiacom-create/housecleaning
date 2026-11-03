@@ -1,5 +1,6 @@
-import { Env, HttpError, Router, Session, formatMoney, json, nowIso, todayIso, uid, validate } from '../lib/core';
+import { Env, HttpError, Router, Session, formatMoney, json, nowIso, todayIn, todayIso, uid, validate } from '../lib/core';
 import { audit, requirePerm, can } from '../lib/security';
+import { toPdf, toXlsx } from '../lib/exporters';
 import { computeCashFlow, computeDre, computeProfitability, helperPaymentsReport } from './finance';
 
 /** CSV with formula-injection protection (cells starting with = + - @ are prefixed with '). */
@@ -71,14 +72,25 @@ export function reportRoutes(r: Router) {
     if (FINANCIAL.has(c.params.name) && !(await can(c.env, s, 'finance.read'))) throw new HttpError(403, 'forbidden');
     const { rows, money } = await build(c.env, s, c.params.name, c.query);
     await audit(c.env, s, 'export', 'report', c.params.name, { format: c.query.get('format') || 'json' });
-    if (c.query.get('format') === 'csv')
+    const fname = `${c.params.name}-${todayIn(s.timezone)}`;
+    const fmt = c.query.get('format');
+    if (fmt === 'xlsx')
+      return new Response(toXlsx(rows, money, c.params.name), { headers: { 'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'content-disposition': `attachment; filename="${fname}.xlsx"`, 'cache-control': 'no-store' } });
+    if (fmt === 'pdf') {
+      const co = await c.env.DB.prepare('SELECT name FROM companies WHERE id=?').bind(s.companyId).first<any>();
+      const period = c.query.get('from') ? `${c.query.get('from')} to ${c.query.get('to')}` : 'All dates';
+      const title = c.params.name === 'dre' ? 'DRE (income statement)' : c.params.name.replace(/-/g, ' ').replace(/^./, (x) => x.toUpperCase());
+      return new Response(toPdf(`${co?.name ?? ''} - ${title}`, `${period}   |   generated ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC`, rows, money,
+        'House Cleaning Management - management report, not a GAAP or tax statement'), { headers: { 'content-type': 'application/pdf', 'content-disposition': `attachment; filename="${fname}.pdf"`, 'cache-control': 'no-store' } });
+    }
+    if (fmt === 'csv')
       return new Response(toCsv(rows, money), { headers: { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': `attachment; filename="${c.params.name}-${todayIso()}.csv"`, 'cache-control': 'no-store' } });
     return json({ rows, money_columns: money });
   });
 
   r.get('/api/dashboard', async (c) => {
     const s = await requirePerm(c.env, c.session, 'schedule.read');
-    const C = s.companyId, today = todayIso();
+    const C = s.companyId, today = todayIn(s.timezone);
     const one = async (sql: string, ...a: any[]) => (await c.env.DB.prepare(sql).bind(...a).first<any>())?.n ?? 0;
     const showMoney = await can(c.env, s, 'finance.read');
     return json({
@@ -102,7 +114,7 @@ export function adminRoutes(r: Router) {
   const admin = (s: Session | null) => { if (!s?.isPlatformAdmin) throw new HttpError(404, 'not_found'); return s; };
   r.get('/api/admin/companies', async (c) => {
     const s = admin(c.session);
-    const { results } = await c.env.DB.prepare(`SELECT co.id, co.name, co.state, co.status, co.created_at,
+    const { results } = await c.env.DB.prepare(`SELECT co.id, co.name, co.state, co.status, co.created_at, co.plan_id, co.subscription_status, co.trial_ends_at,
         (SELECT COUNT(*) FROM company_members m WHERE m.company_id=co.id) members,
         (SELECT COUNT(*) FROM residential_properties p WHERE p.company_id=co.id) properties,
         (SELECT COUNT(*) FROM cleaning_appointments a WHERE a.company_id=co.id) appointments
@@ -119,6 +131,42 @@ export function adminRoutes(r: Router) {
     await audit(c.env, s, `admin_${v.status}`, 'company', c.params.id, { reason: v.reason });
     return json({ ok: true });
   });
+  // ── Subscription plans (configuration only; billing/payment collection is NOT integrated) ──
+  r.get('/api/admin/plans', async (c) => {
+    admin(c.session);
+    return json({ items: (await c.env.DB.prepare(`SELECT p.*, (SELECT COUNT(*) FROM companies c WHERE c.plan_id=p.id AND c.status<>'deleted') companies FROM subscription_plans p ORDER BY price_cents`).all()).results });
+  });
+  r.post('/api/admin/plans', async (c) => {
+    const s = admin(c.session);
+    const v = validate(await c.body(), { name: { type: 'string', required: true, max: 60 }, price: { type: 'money', required: true }, max_properties: { type: 'int', min: 1, max: 1000000 }, max_users: { type: 'int', min: 1, max: 10000 }, active: { type: 'bool' } });
+    const id = uid();
+    try {
+      await c.env.DB.prepare('INSERT INTO subscription_plans (id,name,price_cents,max_properties,max_users,active,created_at) VALUES (?,?,?,?,?,?,?)')
+        .bind(id, v.name, v.price, v.max_properties ?? null, v.max_users ?? null, v.active ?? 1, nowIso()).run();
+    } catch { throw new HttpError(409, 'plan_exists'); }
+    await audit(c.env, s, 'admin_create', 'plan', id, { name: v.name, price: v.price });
+    return json({ id }, 201);
+  });
+  r.put('/api/admin/plans/:id', async (c) => {
+    const s = admin(c.session);
+    const v: any = validate(await c.body(), { name: { type: 'string', max: 60 }, price: { type: 'money' }, max_properties: { type: 'int', min: 1, max: 1000000 }, max_users: { type: 'int', min: 1, max: 10000 }, active: { type: 'bool' } }, true);
+    const cols = Object.keys(v).map((k) => (k === 'price' ? 'price_cents' : k));
+    if (!cols.length) throw new HttpError(422, 'nothing_to_update');
+    const res = await c.env.DB.prepare(`UPDATE subscription_plans SET ${cols.map((k) => `${k}=?`).join(',')} WHERE id=?`).bind(...Object.values(v), c.params.id).run();
+    if (!res.meta.changes) throw new HttpError(404, 'not_found');
+    await audit(c.env, s, 'admin_update', 'plan', c.params.id, v);
+    return json({ ok: true });
+  });
+  r.post('/api/admin/companies/:id/subscription', async (c) => {
+    const s = admin(c.session);
+    const v = validate(await c.body(), { plan_id: { type: 'string' }, subscription_status: { type: 'enum', values: ['trial', 'active', 'past_due', 'canceled'], required: true }, trial_ends_at: { type: 'date' } });
+    if (v.plan_id && !(await c.env.DB.prepare('SELECT 1 FROM subscription_plans WHERE id=?').bind(v.plan_id).first())) throw new HttpError(404, 'not_found');
+    const res = await c.env.DB.prepare("UPDATE companies SET plan_id=?, subscription_status=?, trial_ends_at=? WHERE id=? AND status<>'deleted'").bind(v.plan_id ?? null, v.subscription_status, v.trial_ends_at ?? null, c.params.id).run();
+    if (!res.meta.changes) throw new HttpError(404, 'not_found');
+    await audit(c.env, s, 'admin_subscription', 'company', c.params.id, v);
+    return json({ ok: true });
+  });
+
   r.get('/api/admin/health', async (c) => {
     admin(c.session);
     const jobs = (await c.env.DB.prepare('SELECT job,status,attempts,details,finished_at FROM background_job_records ORDER BY finished_at DESC LIMIT 50').all()).results;
@@ -142,4 +190,14 @@ export async function recordJob(env: Env, job: string, fn: () => Promise<unknown
   }
   await env.DB.prepare('INSERT INTO background_job_records (id,job,status,attempts,details,started_at,finished_at) VALUES (?,?,?,?,?,?,?)').bind(uid(), job, 'error', attempt, String((lastErr as Error)?.message || lastErr).slice(0, 500), started, nowIso()).run();
   return null;
+}
+
+/** Enforces the company's plan limits (if a plan is assigned). */
+export async function checkPlanLimit(env: Env, companyId: string, kind: 'properties' | 'users') {
+  const p = await env.DB.prepare('SELECT sp.max_properties, sp.max_users FROM companies c JOIN subscription_plans sp ON sp.id=c.plan_id WHERE c.id=?').bind(companyId).first<any>();
+  const max = kind === 'properties' ? p?.max_properties : p?.max_users;
+  if (max === null || max === undefined) return;
+  const sql = kind === 'properties' ? "SELECT COUNT(*) n FROM residential_properties WHERE company_id=? AND status<>'archived'" : "SELECT COUNT(*) n FROM company_members WHERE company_id=? AND status='active'";
+  const n = (await env.DB.prepare(sql).bind(companyId).first<any>()).n;
+  if (n >= max) throw new HttpError(402, 'plan_limit_reached', { kind, max });
 }
