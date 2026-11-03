@@ -1,0 +1,32 @@
+{
+  "name": "house-cleaning-management",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev:web": "vite --config web/vite.config.ts",
+    "dev:api": "wrangler dev",
+    "build": "vite build --config web/vite.config.ts",
+    "db:migrate:local": "wrangler d1 migrations apply hcm-db --local",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241022.0",
+    "@types/node": "^26.6.6",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.3",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10",
+    "vitest": "^2.1.4",
+    "wrangler": "^3.84.0"
+  },
+  "engines": {
+    "node": ">=22.5"
+  }
+}

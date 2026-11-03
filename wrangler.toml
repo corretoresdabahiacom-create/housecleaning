@@ -1,0 +1,39 @@
+# Cloudflare configuration. Resource IDs are placeholders: create resources with the commands in docs/DEPLOYMENT.md.
+name = "house-cleaning-management"
+main = "worker/src/index.ts"
+compatibility_date = "2026-10-01"
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "hcm-db"
+database_id = "00000000-0000-0000-0000-000000000000"   # replace after `wrangler d1 create hcm-db`
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "hcm-files"
+
+[triggers]
+crons = ["*/15 * * * *"]   # message expiry purge, recurring horizon, recurring expenses, rate-limit pruning
+
+[vars]
+APP_ENV = "development"
+
+[env.staging]
+name = "house-cleaning-management-staging"
+vars = { APP_ENV = "staging" }
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "hcm-db-staging"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+[[env.staging.r2_buckets]]
+binding = "FILES"
+bucket_name = "hcm-files-staging"
+[env.staging.triggers]
+crons = ["*/15 * * * *"]
