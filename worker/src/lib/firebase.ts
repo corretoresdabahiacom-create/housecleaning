@@ -8,7 +8,7 @@ let cache: { keys: Record<string, JsonWebKey>; exp: number } | null = null;
 const b64url = (s: string) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
 const json = (s: string) => JSON.parse(new TextDecoder().decode(b64url(s)));
 
-async function keys(fetcher: typeof fetch) {
+async function keys(fetcher: (url: string) => Promise<Response>) {
   if (cache && cache.exp > Date.now()) return cache.keys;
   const r = await fetcher(JWKS_URL);
   if (!r.ok) throw new HttpError(502, 'google_keys_unavailable');
@@ -21,7 +21,7 @@ export const _resetFirebaseKeyCache = () => { cache = null; };
 
 export interface FirebaseIdentity { uid: string; email: string; email_verified: boolean; name?: string; provider?: string }
 
-export async function verifyFirebaseIdToken(token: unknown, projectId: string | undefined, fetcher: typeof fetch = fetch, now = Date.now()): Promise<FirebaseIdentity> {
+export async function verifyFirebaseIdToken(token: unknown, projectId: string | undefined, fetcher: (url: string) => Promise<Response> = (url) => fetch(url), now = Date.now()): Promise<FirebaseIdentity> {
   if (!projectId) throw new HttpError(503, 'google_login_not_configured');
   if (typeof token !== 'string' || token.split('.').length !== 3) throw new HttpError(401, 'invalid_google_token');
   const [h, p, sig] = token.split('.');

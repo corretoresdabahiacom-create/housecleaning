@@ -149,3 +149,17 @@ describe('localized exports', () => {
     expect(pdf).toContain('demonstra'); expect(pdf).toContain('relat'); // title and footer in Portuguese (WinAnsi)
   });
 });
+
+describe('Workers runtime regression', () => {
+  it('never calls fetch detached from globalThis (Workers throws "Illegal invocation")', async () => {
+    const env = Object.assign(makeEnv(), { FIREBASE_PROJECT_ID: PROJECT });
+    const strict = function (this: unknown, url: string) {
+      if (this !== undefined && this !== globalThis) throw new TypeError('Illegal invocation');
+      return Promise.resolve(new Response(JSON.stringify({ keys: [{ ...jwk, kid: 'k1', alg: 'RS256' }] })));
+    };
+    // emulate Workers: a detached reference captured at module load would carry no receiver
+    vi.stubGlobal('fetch', strict);
+    const r = await new Client(env).post('/api/auth/google', { id_token: await idToken() });
+    expect(r.status).toBe(404); // reached account lookup → keys fetched and token verified
+  });
+});
