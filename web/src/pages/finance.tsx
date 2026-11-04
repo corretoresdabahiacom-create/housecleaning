@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { centsToInput, fmtMoney, get, post, qs, today } from '../api';
+import { api, centsToInput, fmtMoney, get, post, qs, today } from '../api';
 import { Badge, Bars, Card, Empty, FieldDef, Form, HBars, Loading, Modal, Page, Period, PeriodPicker, Stat, Table, canUi, ExportButtons, periodFor, toast, useErr, useLoad, useMe, useT } from '../ui';
 
 const METHODS = ['cash', 'check', 'bank_transfer', 'zelle', 'credit_card_manual', 'other'].map((v) => ({ value: v, label: 'pm_' + v }));
@@ -103,7 +103,7 @@ export function Receivables({ openOnly }: { openOnly?: boolean }) {
 export function Payables({ kind }: { kind?: 'expense' }) {
   const { t } = useT(); const { me } = useMe(); const onErr = useErr();
   const [f, setF] = useState({ status: '', category_id: '', supplier: '', from: '', to: '' });
-  const [adding, setAdding] = useState(false); const [paying, setPaying] = useState<any>(null);
+  const [adding, setAdding] = useState(false); const [paying, setPaying] = useState<any>(null); const [catsOpen, setCatsOpen] = useState(false);
   const cats = useLoad(() => get('/api/finance/categories'), []);
   const { data, error, reload } = useLoad(() => get(`/api/finance/payables?${qs({ ...f, kind })}`), [JSON.stringify(f), kind]);
   const [payKey] = useState(() => crypto.randomUUID());
@@ -116,7 +116,7 @@ export function Payables({ kind }: { kind?: 'expense' }) {
     { name: 'payment_method', label: 'Payment method', type: 'select', options: METHODS }, { name: 'recurring_monthly', label: 'Recurring monthly', type: 'checkbox' }, { name: 'notes', label: 'Notes', type: 'textarea' },
   ];
   return (
-    <Page title={kind ? t('Expenses') : t('Accounts Payable')} actions={canUi(me, 'financeWrite') && <button className="btn primary" onClick={() => setAdding(true)}>+ {t('Add expense')}</button>}>
+    <Page title={kind ? t('Expenses') : t('Accounts Payable')} actions={canUi(me, 'financeWrite') && <><button className="btn" onClick={() => setCatsOpen(true)}>{t('Categories')}</button><button className="btn primary" onClick={() => setAdding(true)}>+ {t('Add expense')}</button></>}>
       {data && <div className="stats"><Stat label={t('Total outstanding')} value={m(data.summary.total_outstanding)} /><Stat label={t('Due in 7 days')} value={m(data.summary.upcoming_7d)} /><Stat label={t('Overdue')} value={m(data.summary.overdue)} tone={data.summary.overdue ? 'bad' : undefined} /></div>}
       <Card actions={<ExportButtons name="payables" params={{ from: f.from, to: f.to }} />}>
         <div className="row wrap filters">
@@ -125,23 +125,49 @@ export function Payables({ kind }: { kind?: 'expense' }) {
           <input placeholder={t('Supplier / payee')} value={f.supplier} onChange={(e) => setF({ ...f, supplier: e.target.value })} aria-label={t('Supplier / payee')} />
           <input type="date" value={f.from} onChange={(e) => setF({ ...f, from: e.target.value })} aria-label={t('From')} /><input type="date" value={f.to} onChange={(e) => setF({ ...f, to: e.target.value })} aria-label={t('To')} />
         </div>
-        {!data ? <Loading error={error} /> : <Table rows={data.items} onRow={canUi(me, 'financeWrite') ? (r) => r.outstanding_cents > 0 && setPaying(r) : undefined} cols={[
+        {!data ? <Loading error={error} /> : <Table rows={data.items} onRow={setPaying} cols={[
           { key: 'due_date', label: 'Due date' }, { key: 'payee', label: 'Payee' }, { key: 'description', label: 'Description', hideSm: true },
           { key: 'category_name', label: 'Category', hideSm: true }, { key: 'amount_cents', label: 'Amount', num: true, render: (r) => m(r.amount_cents) },
           { key: 'outstanding_cents', label: 'Outstanding', num: true, render: (r) => m(r.outstanding_cents) },
-          { key: 'status', label: 'Status', render: (r) => <><Badge s={r.status} />{r.overdue && <Badge s="overdue" />}</> },
+          { key: 'status', label: 'Status', render: (r) => <><Badge s={r.status} />{r.overdue && <Badge s="overdue" />}{r.attachment_key && <span title={t('Receipt attached')}> 📎</span>}</> },
         ]} />}
       </Card>
+      {catsOpen && <CategoriesModal cats={cats.data?.items || []} onClose={() => setCatsOpen(false)} onChange={cats.reload} />}
       {adding && <Modal title={t('Add expense')} onClose={() => setAdding(false)}><Form fields={expenseFields} initial={{ expense_date: today(), installments: '1' }} onCancel={() => setAdding(false)} onSubmit={async (v) => { await post('/api/finance/expenses', v); toast(t('Saved')); setAdding(false); reload(); }} /></Modal>}
       {paying && <Modal title={`${t('Register payment')} · ${paying.payee}`} onClose={() => setPaying(null)}>
         <p>{paying.description} — {t('Outstanding')}: <b>{m(paying.outstanding_cents)}</b></p>
-        <Form fields={[{ name: 'amount', label: 'Amount (USD)', type: 'money', required: true }, { name: 'date', label: 'Payment date', type: 'date', required: true }, { name: 'method', label: 'Payment method', type: 'select', options: METHODS, required: true }, { name: 'notes', label: 'Notes', type: 'textarea' }]}
+        <Attachment payable={paying} canEdit={canUi(me, 'financeWrite')} onChange={() => { reload(); setPaying({ ...paying, attachment_key: 'x' }); }} />
+        {canUi(me, 'financeWrite') && paying.outstanding_cents > 0 && <Form fields={[{ name: 'amount', label: 'Amount (USD)', type: 'money', required: true }, { name: 'date', label: 'Payment date', type: 'date', required: true }, { name: 'method', label: 'Payment method', type: 'select', options: METHODS, required: true }, { name: 'notes', label: 'Notes', type: 'textarea' }]}
           initial={{ amount: centsToInput(paying.outstanding_cents), date: today(), method: 'zelle' }} submitLabel="Register payment"
-          onSubmit={async (v) => { await post(`/api/finance/payables/${paying.id}/payments`, { ...v, idempotency_key: `${payKey}:${paying.id}` }); toast(t('Saved')); setPaying(null); reload(); }} />
-        {paying.paid_cents === 0 && <div className="row end"><button className="btn ghost" onClick={async () => { try { await post(`/api/finance/payables/${paying.id}/cancel`); setPaying(null); reload(); } catch (e) { onErr(e); } }}>{t('Cancel bill')}</button></div>}
+          onSubmit={async (v) => { await post(`/api/finance/payables/${paying.id}/payments`, { ...v, idempotency_key: `${payKey}:${paying.id}` }); toast(t('Saved')); setPaying(null); reload(); }} />}
+        {canUi(me, 'financeWrite') && paying.paid_cents === 0 && paying.status !== 'canceled' && <div className="row end"><button className="btn ghost" onClick={async () => { try { await post(`/api/finance/payables/${paying.id}/cancel`); setPaying(null); reload(); } catch (e) { onErr(e); } }}>{t('Cancel bill')}</button></div>}
       </Modal>}
     </Page>
   );
+}
+
+function Attachment({ payable, canEdit, onChange }: { payable: any; canEdit: boolean; onChange: () => void }) {
+  const { t } = useT(); const onErr = useErr(); const [busy, setBusy] = useState(false);
+  return <div className="row wrap attach">
+    {payable.attachment_key ? <a className="btn sm ghost" href={`/api/finance/payables/${payable.id}/attachment`} target="_blank" rel="noopener">📎 {payable.attachment_name || t('View receipt')}</a> : <span className="muted small">{t('No receipt attached.')}</span>}
+    {canEdit && <label className="btn sm">{busy ? t('Saving…') : payable.attachment_key ? t('Replace receipt') : t('Attach receipt')}
+      <input type="file" accept="application/pdf,image/jpeg,image/png,image/webp" hidden onChange={async (e) => {
+        const f = e.target.files?.[0]; if (!f) return; setBusy(true);
+        try { const fd = new FormData(); fd.set('file', f); await api(`/api/finance/payables/${payable.id}/attachment`, { method: 'POST', form: fd }); toast(t('Saved')); onChange(); } catch (er) { onErr(er); } finally { setBusy(false); e.target.value = ''; }
+      }} /></label>}
+  </div>;
+}
+
+const DRE_GROUPS = ['direct_cost', 'operating_expense', 'financial', 'tax_deduction'];
+function CategoriesModal({ cats, onClose, onChange }: { cats: any[]; onClose: () => void; onChange: () => void }) {
+  const { t } = useT();
+  return <Modal title={t('Financial categories')} onClose={onClose}>
+    <p className="muted small">{t('Each category belongs to one DRE line, so custom categories appear in the right place of the income statement.')}</p>
+    {DRE_GROUPS.map((g) => <div key={g}><h3>{t('dre_' + g)}</h3><div className="row wrap">{cats.filter((c) => c.dre_group === g).map((c) => <span key={c.id} className="badge">{c.name}</span>)}</div></div>)}
+    <h3>{t('New category')}</h3>
+    <Form fields={[{ name: 'name', label: 'Name', required: true }, { name: 'dre_group', label: 'DRE line', type: 'select', required: true, options: DRE_GROUPS.map((g) => ({ value: g, label: 'dre_' + g })) }]}
+      initial={{ dre_group: 'operating_expense' }} submitLabel="Add" onSubmit={async (v) => { await post('/api/finance/categories', v); toast(t('Saved')); onChange(); }} />
+  </Modal>;
 }
 
 export function HelperPayments() {

@@ -173,3 +173,6 @@ td { padding: 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
 .live { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 6px; } .live.on { background: var(--good); }
 .combo-sm { min-width: 200px; }
 .turnstile { margin: 10px 0; min-height: 65px; }
+.or { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: .85rem; margin: 12px 0 8px; } .or::before, .or::after { content: ''; flex: 1; height: 1px; background: var(--line); }
+.btn.google { width: 100%; justify-content: center; gap: 10px; color: #1f1f1f; border-color: #dadce0; }
+.end-inline { justify-content: flex-end; } .attach { margin: 8px 0 12px; }

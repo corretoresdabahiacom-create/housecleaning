@@ -227,7 +227,8 @@ export function HBars({ data, format }: { data: { name: string; v: number }[]; f
 }
 
 export function downloadReport(name: string, params: Record<string, string>, format: 'csv' | 'xlsx' | 'pdf' = 'csv') {
-  const q = new URLSearchParams({ ...Object.fromEntries(Object.entries(params).filter(([, v]) => v)), format });
+  let lang = 'en'; try { lang = document.documentElement.lang || 'en'; } catch { /* ignore */ }
+  const q = new URLSearchParams({ ...Object.fromEntries(Object.entries(params).filter(([, v]) => v)), format, lang });
   const a = document.createElement('a'); a.href = `/api/reports/${name}?${q}`; a.rel = 'noopener'; a.download = '';
   document.body.appendChild(a); a.click(); a.remove();
 }

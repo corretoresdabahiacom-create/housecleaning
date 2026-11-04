@@ -22,7 +22,8 @@ export async function purgeDeletedCompanies(env: Env, now = Date.now()) {
     if (env.FILES) {
       const photos = (await env.DB.prepare('SELECT r2_key FROM property_photos WHERE company_id=?').bind(id).all<any>()).results.map((r) => r.r2_key);
       const atts = (await env.DB.prepare('SELECT attachment_key FROM messages WHERE company_id=? AND attachment_key IS NOT NULL').bind(id).all<any>()).results.map((r) => r.attachment_key);
-      const keys = [...photos, ...atts];
+      const exp = (await env.DB.prepare('SELECT attachment_key FROM accounts_payable WHERE company_id=? AND attachment_key IS NOT NULL').bind(id).all<any>()).results.map((r) => r.attachment_key);
+      const keys = [...photos, ...atts, ...exp];
       for (let i = 0; i < keys.length; i += 500) await env.FILES.delete(keys.slice(i, i + 500));
     }
     const members = (await env.DB.prepare('SELECT user_id FROM company_members WHERE company_id=?').bind(id).all<any>()).results.map((r) => r.user_id as string);

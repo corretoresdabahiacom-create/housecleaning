@@ -1,6 +1,7 @@
 import { Env, HttpError, Router, Session, formatMoney, json, nowIso, todayIn, todayIso, uid, validate } from '../lib/core';
 import { audit, requirePerm, can } from '../lib/security';
 import { toPdf, toXlsx } from '../lib/exporters';
+import { localizeRows, periodLabel, reportFooter, reportTitle } from '../lib/report-i18n';
 import { computeCashFlow, computeDre, computeProfitability, helperPaymentsReport } from './finance';
 
 /** CSV with formula-injection protection (cells starting with = + - @ are prefixed with '). */
@@ -74,18 +75,26 @@ export function reportRoutes(r: Router) {
     await audit(c.env, s, 'export', 'report', c.params.name, { format: c.query.get('format') || 'json' });
     const fname = `${c.params.name}-${todayIn(s.timezone)}`;
     const fmt = c.query.get('format');
+    const lang = c.query.get('lang');
+    const loc = fmt ? localizeRows(rows, money, lang) : { rows, money };
     if (fmt === 'xlsx')
-      return new Response(toXlsx(rows, money, c.params.name), { headers: { 'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'content-disposition': `attachment; filename="${fname}.xlsx"`, 'cache-control': 'no-store' } });
+      return new Response(toXlsx(loc.rows, loc.money, reportTitle(c.params.name, lang)), { headers: { 'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'content-disposition': `attachment; filename="${fname}.xlsx"`, 'cache-control': 'no-store' } });
     if (fmt === 'pdf') {
       const co = await c.env.DB.prepare('SELECT name FROM companies WHERE id=?').bind(s.companyId).first<any>();
-      const period = c.query.get('from') ? `${c.query.get('from')} to ${c.query.get('to')}` : 'All dates';
-      const title = c.params.name === 'dre' ? 'DRE (income statement)' : c.params.name.replace(/-/g, ' ').replace(/^./, (x) => x.toUpperCase());
-      return new Response(toPdf(`${co?.name ?? ''} - ${title}`, `${period}   |   generated ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC`, rows, money,
-        'House Cleaning Management - management report, not a GAAP or tax statement'), { headers: { 'content-type': 'application/pdf', 'content-disposition': `attachment; filename="${fname}.pdf"`, 'cache-control': 'no-store' } });
+      return new Response(toPdf(`${co?.name ?? ''} - ${reportTitle(c.params.name, lang)}`, `${periodLabel(c.query.get('from'), c.query.get('to'), lang)}   |   ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC`, loc.rows, loc.money,
+        reportFooter(lang)), { headers: { 'content-type': 'application/pdf', 'content-disposition': `attachment; filename="${fname}.pdf"`, 'cache-control': 'no-store' } });
     }
     if (fmt === 'csv')
-      return new Response(toCsv(rows, money), { headers: { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': `attachment; filename="${c.params.name}-${todayIso()}.csv"`, 'cache-control': 'no-store' } });
+      return new Response(toCsv(loc.rows, loc.money), { headers: { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': `attachment; filename="${c.params.name}-${todayIso()}.csv"`, 'cache-control': 'no-store' } });
     return json({ rows, money_columns: money });
+  });
+
+  // Company audit log (owner/admin). Details never contain secrets or access instructions.
+  r.get('/api/audit', async (c) => {
+    const s = await requirePerm(c.env, c.session, 'company.manage');
+    const { results } = await c.env.DB.prepare(`SELECT a.created_at, a.action, a.entity, a.entity_id, a.details, u.full_name AS user_name
+      FROM audit_logs a LEFT JOIN users u ON u.id=a.user_id WHERE a.company_id=? ORDER BY a.created_at DESC LIMIT 300`).bind(s.companyId).all();
+    return json({ items: results });
   });
 
   r.get('/api/dashboard', async (c) => {

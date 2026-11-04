@@ -186,6 +186,7 @@ export function PropertyDetail({ id }: { id: string }) {
           </Card>
         </div>
       </div>
+      <ServicePricesCard propertyId={id} prices={data.service_prices} basePrice={p.price_cents} canEdit={canUi(me, 'write')} onChange={reload} />
       <PhotosCard propertyId={id} canEdit={canUi(me, 'write')} />
       <Card title={t('Cleaning history')} actions={history.data?.next && <span className="muted">{t('Next cleaning')}: {history.data.next.date} {history.data.next.start_time}</span>}>
         {!history.data ? <Loading /> : <Table rows={history.data.items} onRow={(r) => (location.hash = `/calendar?appointment=${r.id}`)} cols={[
@@ -204,6 +205,28 @@ export function PropertyDetail({ id }: { id: string }) {
       {modal === 'schedule' && <Modal title={t('Schedule cleaning')} onClose={close}><AppointmentForm propertyId={id} onDone={() => { close(); history.reload(); }} /></Modal>}
     </Page>
   );
+}
+
+/** Negotiated price per service for this property (overrides the service default; never changes past appointments). */
+function ServicePricesCard({ propertyId, prices, basePrice, canEdit, onChange }: { propertyId: string; prices: any[]; basePrice: number; canEdit: boolean; onChange: () => void }) {
+  const { t } = useT(); const onErr = useErr();
+  const services = useLoad(() => get('/api/services'), []);
+  const [edit, setEdit] = useState<Record<string, string>>({});
+  const byId = Object.fromEntries(prices.map((x) => [x.service_id, x.price_cents]));
+  const save = async (sid: string, value: string | null) => {
+    try { await put(`/api/properties/${propertyId}/service-prices`, { service_id: sid, price: value || null }); toast(t('Saved')); setEdit((e) => { const n = { ...e }; delete n[sid]; return n; }); onChange(); } catch (e) { onErr(e); }
+  };
+  return <Card title={t('Services & negotiated prices')}>
+    <p className="muted small">{t('Without a negotiated price, appointments use the property price')} ({fmtMoney(basePrice)}). {t('Default prices never overwrite negotiated property-specific prices.')}</p>
+    {!services.data ? <Loading /> : <Table rows={services.data.items.filter((sv: any) => sv.active || byId[sv.id] !== undefined)} cols={[
+      { key: 'name', label: 'Service' }, { key: 'default_price_cents', label: 'Default price', num: true, hideSm: true, render: (sv) => fmtMoney(sv.default_price_cents) },
+      { key: 'neg', label: 'Negotiated price', num: true, render: (sv) => edit[sv.id] !== undefined
+        ? <span className="row end-inline"><input className="sm" inputMode="decimal" value={edit[sv.id]} onChange={(e) => setEdit({ ...edit, [sv.id]: e.target.value })} aria-label={t('Negotiated price')} /><button className="btn sm primary" onClick={() => save(sv.id, edit[sv.id])}>{t('Save')}</button></span>
+        : <span className="row end-inline">{byId[sv.id] !== undefined ? <b>{fmtMoney(byId[sv.id])}</b> : <span className="muted">—</span>}
+          {canEdit && <button className="btn sm ghost" onClick={() => setEdit({ ...edit, [sv.id]: byId[sv.id] !== undefined ? centsToInput(byId[sv.id]) : '' })}>{t('Edit')}</button>}
+          {canEdit && byId[sv.id] !== undefined && <button className="btn sm ghost" onClick={() => save(sv.id, null)} aria-label={t('Remove')}>✕</button>}</span> },
+    ]} />}
+  </Card>;
 }
 
 function PhotosCard({ propertyId, canEdit }: { propertyId: string; canEdit: boolean }) {

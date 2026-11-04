@@ -9,6 +9,7 @@ import { reportRoutes, adminRoutes, recordJob } from './modules/reports';
 import { purgeDeletedCompanies } from './modules/maintenance';
 import { routeRoutes } from './modules/routes';
 import { rotateEncryptedData } from './lib/security';
+import { withStorage } from './lib/storage';
 
 export { RealtimeHub } from './realtime';
 
@@ -18,7 +19,8 @@ router.get('/api/health', () => json({ ok: true }), false);
 
 const MAX_BODY = 1_000_000;
 
-export async function handleApi(req: Request, env: Env): Promise<Response> {
+export async function handleApi(req: Request, rawEnv: Env): Promise<Response> {
+  const env = withStorage(rawEnv);
   const url = new URL(req.url);
   try {
     const m = router.match(req.method, url.pathname);
@@ -59,12 +61,16 @@ export default {
       const h = new Headers(res.headers);
       for (const [k, v] of Object.entries(securityHeaders)) if (k !== 'cache-control') h.set(k, v);
       const wsOrigin = url.origin.replace(/^http/, 'ws');
-      h.set('content-security-policy', `default-src 'self'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' ${wsOrigin}; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`);
+      // Firebase Auth (Google sign-in) needs its auth domain frame, Google's script loader and the Identity Toolkit APIs.
+      const fbDomain = env.FIREBASE_PROJECT_ID ? ` https://${env.FIREBASE_AUTH_DOMAIN || env.FIREBASE_PROJECT_ID + '.firebaseapp.com'}` : '';
+      const fb = env.FIREBASE_PROJECT_ID ? { script: ' https://apis.google.com', frame: `${fbDomain} https://accounts.google.com`, connect: ' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com' } : { script: '', frame: '', connect: '' };
+      h.set('content-security-policy', `default-src 'self'; script-src 'self' https://challenges.cloudflare.com${fb.script}; frame-src https://challenges.cloudflare.com${fb.frame}; img-src 'self' data: blob: https://lh3.googleusercontent.com; style-src 'self' 'unsafe-inline'; connect-src 'self' ${wsOrigin}${fb.connect}; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`);
       return new Response(res.body, { status: res.status, headers: h });
     }
     return new Response('Not found', { status: 404 });
   },
-  async scheduled(_ev: unknown, env: Env) {
+  async scheduled(_ev: unknown, rawEnv: Env) {
+    const env = withStorage(rawEnv);
     await recordJob(env, 'purge_expired_messages', () => purgeExpiredMessages(env));
     await recordJob(env, 'extend_recurring_appointments', () => extendAllRules(env));
     await recordJob(env, 'recurring_expenses', () => generateRecurringExpenses(env));

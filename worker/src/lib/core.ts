@@ -28,7 +28,10 @@ export interface Env {
   WHATSAPP_PHONE_NUMBER_ID?: string;
   AI?: { run(model: string, input: unknown): Promise<any> };   // Workers AI binding (translation)
   REALTIME?: { idFromName(n: string): any; get(id: any): { fetch(r: Request): Promise<Response> } };  // Durable Object namespace
-  PURGE_AFTER_DAYS?: string;   // retention before hard purge of deleted companies (default 30)
+  PURGE_AFTER_DAYS?: string;
+  FIREBASE_PROJECT_ID?: string;  // Google sign-in via Firebase Auth (public web config)
+  FIREBASE_API_KEY?: string;
+  FIREBASE_AUTH_DOMAIN?: string;   // retention before hard purge of deleted companies (default 30)
   APP_ENV?: string;            // 'development' | 'staging' | 'production'
   APP_ORIGIN?: string;
 }

@@ -4,6 +4,7 @@ import {
   sessionCookie, sha256, verifyPassword, PBKDF2_ITERATIONS,
 } from '../lib/security';
 import { seedCompanyDefaults } from './seed';
+import { verifyFirebaseIdToken } from '../lib/firebase';
 import { checkPlanLimit } from './reports';
 
 const LANGS = ['en', 'pt', 'es'] as const;
@@ -30,11 +31,14 @@ export function authRoutes(r: Router) {
       city: { type: 'string', required: true, max: 80 }, language: { type: 'enum', values: LANGS }, phone: { type: 'string', max: 30 },
       timezone: { type: 'string', max: 60 }, accept_terms: { type: 'bool', required: true },
     });
-    passwordPolicy(b.password);
+    // Registration with Google (Firebase ID token): email comes verified from Google; no password is set.
+    const google = b.google_id_token ? await verifyFirebaseIdToken(b.google_id_token, c.env.FIREBASE_PROJECT_ID) : null;
+    if (google && google.email !== v.email) throw new HttpError(422, 'validation_error', { email: 'google_email_mismatch' });
+    if (!google) passwordPolicy(b.password);
     if (!v.accept_terms) throw new HttpError(422, 'validation_error', { accept_terms: 'required' });
     const exists = await c.env.DB.prepare('SELECT id FROM users WHERE email=?').bind(v.email).first();
     if (exists) throw new HttpError(409, 'email_in_use');
-    const pw = await hashPassword(b.password);
+    const pw = await hashPassword(google ? randomToken() + randomToken() : b.password);
     const userId = uid(), companyId = uid(), now = nowIso();
     await c.env.DB.batch([
       c.env.DB.prepare('INSERT INTO users (id,email,full_name,password_hash,password_salt,password_iterations,language,created_at) VALUES (?,?,?,?,?,?,?,?)')
@@ -45,10 +49,11 @@ export function authRoutes(r: Router) {
       c.env.DB.prepare('INSERT INTO consent_records (id,user_id,document,version,accepted_at) VALUES (?,?,?,?,?)').bind(uid(), userId, 'terms_privacy', '2026-11', now),
     ]);
     await seedCompanyDefaults(c.env, companyId);
-    const token = await issueToken(c.env, userId, 'verify_email', 48);
+    if (google) await c.env.DB.prepare('UPDATE users SET google_uid=?, email_verified_at=? WHERE id=?').bind(google.uid, now, userId).run();
+    const token = google ? '' : await issueToken(c.env, userId, 'verify_email', 48);
     const s = await createSession(c.env, userId, companyId, c.req.headers.get('user-agent'));
     await audit(c.env, { userId, companyId } as any, 'register', 'company', companyId);
-    return json({ ok: true, user_id: userId, company_id: companyId, ...devToken(c.env, token) }, 201, { 'set-cookie': sessionCookie(s.token, c.env) });
+    return json({ ok: true, user_id: userId, company_id: companyId, ...(token ? devToken(c.env, token) : {}) }, 201, { 'set-cookie': sessionCookie(s.token, c.env) });
   }, false);
 
   r.post('/api/auth/login', async (c) => {
@@ -63,20 +68,23 @@ export function authRoutes(r: Router) {
       await securityEvent(c.env, 'login_failed', c.req, u?.id);
       throw new HttpError(401, 'invalid_credentials');
     }
-    const m = await c.env.DB.prepare(
-      `SELECT m.company_id FROM company_members m JOIN companies co ON co.id=m.company_id
-        WHERE m.user_id=? AND m.status='active' AND (co.status='active' OR ?=1) ORDER BY m.created_at LIMIT 1`)
-      .bind(u.id, u.is_platform_admin).first<any>();
-    if (!m) throw new HttpError(403, 'no_active_company');
-    if (u.mfa_enabled) {
-      // Password OK → issue a short-lived MFA challenge; the session is created only after the TOTP step.
-      const token = randomToken();
-      await c.env.DB.prepare('INSERT INTO mfa_challenges (id,user_id,company_id,expires_at) VALUES (?,?,?,?)')
-        .bind(await sha256(token), u.id, m.company_id, new Date(Date.now() + 5 * 60e3).toISOString()).run();
-      return json({ mfa_required: true, mfa_token: token });
+    return finishLogin(c, u);
+  }, false);
+
+  // Sign in with Google (Firebase Auth). Links by Google UID, or by verified email on first use.
+  r.post('/api/auth/google', async (c) => {
+    await rateLimit(c.env, `google:ip:${ip(c)}`, 30, 900);
+    const b = await c.body();
+    const g = await verifyFirebaseIdToken(b?.id_token, c.env.FIREBASE_PROJECT_ID);
+    let u = await c.env.DB.prepare('SELECT * FROM users WHERE google_uid=? AND deleted_at IS NULL').bind(g.uid).first<any>();
+    if (!u) {
+      u = await c.env.DB.prepare('SELECT * FROM users WHERE email=? AND deleted_at IS NULL').bind(g.email).first<any>();
+      if (!u) return json({ error: 'google_account_not_registered', details: { email: g.email, name: g.name || '' } }, 404);
+      if (u.google_uid && u.google_uid !== g.uid) throw new HttpError(409, 'google_account_mismatch');
+      await c.env.DB.prepare('UPDATE users SET google_uid=?, email_verified_at=COALESCE(email_verified_at, ?) WHERE id=?').bind(g.uid, nowIso(), u.id).run();
+      await securityEvent(c.env, 'google_linked', c.req, u.id);
     }
-    const s = await createSession(c.env, u.id, m.company_id, c.req.headers.get('user-agent'));
-    return json({ ok: true }, 200, { 'set-cookie': sessionCookie(s.token, c.env) });
+    return finishLogin(c, u);
   }, false);
 
   r.post('/api/auth/mfa/verify', async (c) => {
@@ -148,7 +156,10 @@ export function authRoutes(r: Router) {
     return json({ ok: true });
   });
 
-  r.get('/api/auth/config', async (c) => json({ turnstile_site_key: c.env.TURNSTILE_SITE_KEY || null }), false);
+  r.get('/api/auth/config', async (c) => json({
+    turnstile_site_key: c.env.TURNSTILE_SITE_KEY || null,
+    firebase: c.env.FIREBASE_PROJECT_ID && c.env.FIREBASE_API_KEY ? { apiKey: c.env.FIREBASE_API_KEY, authDomain: c.env.FIREBASE_AUTH_DOMAIN || `${c.env.FIREBASE_PROJECT_ID}.firebaseapp.com`, projectId: c.env.FIREBASE_PROJECT_ID } : null,
+  }), false);
 
   r.post('/api/auth/logout', async (c) => {
     if (c.session) await c.env.DB.prepare('UPDATE user_sessions SET revoked_at=? WHERE id=?').bind(nowIso(), c.session.sessionId).run();
@@ -301,6 +312,24 @@ export function authRoutes(r: Router) {
     await audit(c.env, s, 'delete_requested', 'company', s.companyId);
     return json({ ok: true, purge_after_days: parseInt(c.env.PURGE_AFTER_DAYS || '30', 10) });
   });
+}
+
+/** Shared end of every login path: company selection, MFA challenge, session cookie. */
+async function finishLogin(c: Ctx, u: any) {
+  const m = await c.env.DB.prepare(
+    `SELECT m.company_id FROM company_members m JOIN companies co ON co.id=m.company_id
+      WHERE m.user_id=? AND m.status='active' AND (co.status='active' OR ?=1) ORDER BY m.created_at LIMIT 1`)
+    .bind(u.id, u.is_platform_admin).first<any>();
+  if (!m) throw new HttpError(403, 'no_active_company');
+  if (u.mfa_enabled) {
+    // First factor OK → short-lived MFA challenge; the session is created only after the TOTP step.
+    const token = randomToken();
+    await c.env.DB.prepare('INSERT INTO mfa_challenges (id,user_id,company_id,expires_at) VALUES (?,?,?,?)')
+      .bind(await sha256(token), u.id, m.company_id, new Date(Date.now() + 5 * 60e3).toISOString()).run();
+    return json({ mfa_required: true, mfa_token: token });
+  }
+  const s = await createSession(c.env, u.id, m.company_id, c.req.headers.get('user-agent'));
+  return json({ ok: true }, 200, { 'set-cookie': sessionCookie(s.token, c.env) });
 }
 
 async function useToken(env: Env, token: unknown, kind: string) {

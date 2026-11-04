@@ -34,6 +34,9 @@ const EN_CODES: Record<string, string> = {
   photo_limit_reached: 'Photo limit reached (20 per property).', translation_not_configured: 'Translation is not configured.', translation_failed: 'Translation failed.',
   geocoding_failed: 'Could not reach the geocoding service.', address_not_found: 'Address not found by the US Census geocoder.', encryption_key_unavailable: 'Encryption key unavailable.',
   multipart_required: 'Upload a file.', plan_exists: 'A plan with this name already exists.', trial: 'Trial', past_due: 'Past due',
+  dre_direct_cost: 'Direct costs', dre_operating_expense: 'Operating expenses', dre_financial: 'Financial result', dre_tax_deduction: 'Revenue deductions (taxes)',
+  google_account_not_registered: 'No account for this Google email yet.', google_account_mismatch: 'This account is linked to a different Google account.', invalid_google_token: 'Google sign-in could not be verified.',
+  google_email_not_verified: 'Your Google email is not verified.', google_login_not_configured: 'Google sign-in is not configured.', google_keys_unavailable: 'Google sign-in is temporarily unavailable.', google_email_mismatch: 'must match your Google email',
   internal_error: 'Unexpected error.', range_too_large: 'Date range too large.', nothing_to_update: 'Nothing to update.', two_required: 'select exactly two days', before_start: 'before start date',
 };
 
@@ -226,6 +229,22 @@ const T: Row[] = [
   ['Translation failed.', 'A tradução falhou.', 'Falló la traducción.'], ['Could not reach the geocoding service.', 'Não foi possível acessar o serviço de geolocalização.', 'No se pudo acceder al servicio de geocodificación.'],
   ['Address not found by the US Census geocoder.', 'Endereço não encontrado pelo geocodificador do Censo dos EUA.', 'Dirección no encontrada por el geocodificador del Censo de EE. UU.'], ['Encryption key unavailable.', 'Chave de criptografia indisponível.', 'Clave de cifrado no disponible.'],
   ['Upload a file.', 'Envie um arquivo.', 'Suba un archivo.'], ['A plan with this name already exists.', 'Já existe um plano com este nome.', 'Ya existe un plan con este nombre.'],
+
+  ['No account for this Google email yet — complete your business details.', 'Ainda não há conta para este e-mail do Google — complete os dados da empresa.', 'Aún no hay cuenta para este correo de Google — complete los datos de la empresa.'],
+  ['Google sign-in failed. Check that pop-ups are allowed.', 'O login com Google falhou. Verifique se pop-ups estão permitidos.', 'Falló el inicio con Google. Verifique que las ventanas emergentes estén permitidas.'],
+  ['Continue with Google', 'Continuar com o Google', 'Continuar con Google'], ['Signing up with Google as', 'Cadastrando com o Google como', 'Registrándose con Google como'], ['or', 'ou', 'o'],
+  ['Services & negotiated prices', 'Serviços e preços negociados', 'Servicios y precios negociados'], ['Without a negotiated price, appointments use the property price', 'Sem preço negociado, os agendamentos usam o preço do imóvel', 'Sin precio negociado, las citas usan el precio de la propiedad'],
+  ['Negotiated price', 'Preço negociado', 'Precio negociado'], ['Categories', 'Categorias', 'Categorías'], ['Receipt attached', 'Comprovante anexado', 'Comprobante adjunto'], ['View receipt', 'Ver comprovante', 'Ver comprobante'],
+  ['No receipt attached.', 'Nenhum comprovante anexado.', 'Sin comprobante adjunto.'], ['Replace receipt', 'Substituir comprovante', 'Reemplazar comprobante'], ['Attach receipt', 'Anexar comprovante', 'Adjuntar comprobante'],
+  ['Financial categories', 'Categorias financeiras', 'Categorías financieras'], ['Each category belongs to one DRE line, so custom categories appear in the right place of the income statement.', 'Cada categoria pertence a uma linha da DRE, então categorias personalizadas aparecem no lugar certo do demonstrativo.', 'Cada categoría pertenece a una línea del estado de resultados, así las categorías personalizadas aparecen en el lugar correcto.'],
+  ['New category', 'Nova categoria', 'Nueva categoría'], ['DRE line', 'Linha da DRE', 'Línea del estado'], ['Audit log', 'Registro de auditoria', 'Registro de auditoría'], ['Hide', 'Ocultar', 'Ocultar'],
+  ['Who did what in your company account (last 300 events). Sensitive contents are never recorded.', 'Quem fez o quê na conta da empresa (últimos 300 eventos). Conteúdos sensíveis nunca são registrados.', 'Quién hizo qué en la cuenta de la empresa (últimos 300 eventos). Nunca se registran contenidos sensibles.'],
+  ['User', 'Usuário', 'Usuario'], ['Action', 'Ação', 'Acción'], ['Record', 'Registro', 'Registro'],
+  ['Revenue deductions (taxes)', 'Deduções da receita (impostos)', 'Deducciones de ingresos (impuestos)'], ['Financial result', 'Resultado financeiro', 'Resultado financiero'], ['Direct costs', 'Custos diretos', 'Costos directos'],
+  ['No account for this Google email yet.', 'Ainda não há conta para este e-mail do Google.', 'Aún no hay cuenta para este correo de Google.'], ['This account is linked to a different Google account.', 'Esta conta está vinculada a outra conta Google.', 'Esta cuenta está vinculada a otra cuenta de Google.'],
+  ['Google sign-in could not be verified.', 'Não foi possível verificar o login com Google.', 'No se pudo verificar el inicio con Google.'], ['Your Google email is not verified.', 'Seu e-mail do Google não está verificado.', 'Su correo de Google no está verificado.'],
+  ['Google sign-in is not configured.', 'O login com Google não está configurado.', 'El inicio con Google no está configurado.'], ['Google sign-in is temporarily unavailable.', 'O login com Google está temporariamente indisponível.', 'El inicio con Google no está disponible temporalmente.'],
+  ['must match your Google email', 'deve ser igual ao seu e-mail do Google', 'debe coincidir con su correo de Google'],
   // coded values
   ['One-time', 'Avulsa', 'Única'], ['Daily', 'Diária', 'Diaria'], ['Weekly', 'Semanal', 'Semanal'], ['Twice per week', 'Duas vezes por semana', 'Dos veces por semana'], ['Every two weeks', 'Quinzenal', 'Cada dos semanas'],
   ['Every three weeks', 'A cada três semanas', 'Cada tres semanas'], ['Monthly', 'Mensal', 'Mensual'], ['Every two months', 'Bimestral', 'Cada dos meses'], ['Custom recurring schedule', 'Recorrência personalizada', 'Recurrencia personalizada'],

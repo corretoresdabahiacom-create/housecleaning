@@ -1,5 +1,6 @@
 import { Env, HttpError, Router, Session, assertCurrency, divRound, json, nowIso, ratioBps, todayIso, uid, validate } from '../lib/core';
 import { audit, owned, requirePerm } from '../lib/security';
+import { sniff } from './messages';
 
 const METHODS = ['cash', 'check', 'bank_transfer', 'zelle', 'credit_card_manual', 'other'] as const;
 type Basis = 'accrual' | 'cash';
@@ -364,6 +365,34 @@ export function financeRoutes(r: Router) {
     await audit(c.env, s, 'batch_payment', 'helper_payables', null, { count: done.length });
     return json({ paid: done });
   });
+  // Expense receipt/invoice attachment (PDF or image, 8 MB). Replaces any previous file.
+  r.post('/api/finance/payables/:id/attachment', async (c) => {
+    const s = await requirePerm(c.env, c.session, 'finance.write');
+    const ap: any = await owned(c.env, 'accounts_payable', c.params.id, s.companyId);
+    if (!c.env.FILES) throw new HttpError(503, 'storage_not_configured');
+    if (!(c.req.headers.get('content-type') || '').startsWith('multipart/form-data')) throw new HttpError(415, 'multipart_required');
+    const file = (await c.req.formData()).get('file') as unknown as File | null;
+    if (!file || typeof file !== 'object') throw new HttpError(422, 'validation_error', { file: 'required' });
+    if (file.size > 8 * 1024 * 1024) throw new HttpError(413, 'attachment_too_large');
+    const buf = new Uint8Array(await file.arrayBuffer());
+    const type = sniff(buf);
+    if (!type) throw new HttpError(415, 'attachment_type_not_allowed');
+    const key = `expense/${s.companyId}/${ap.id}/${uid()}`;
+    await c.env.FILES.put(key, buf, { httpMetadata: { contentType: type } });
+    if (ap.attachment_key) await c.env.FILES.delete(ap.attachment_key);
+    await c.env.DB.prepare('UPDATE accounts_payable SET attachment_key=?, attachment_name=?, attachment_type=? WHERE id=? AND company_id=?')
+      .bind(key, String(file.name || 'file').replace(/[^\w.\- ]/g, '_').slice(0, 100), type, ap.id, s.companyId).run();
+    await audit(c.env, s, 'attach', 'payable', ap.id);
+    return json({ ok: true }, 201);
+  });
+  r.get('/api/finance/payables/:id/attachment', async (c) => {
+    const s = await requirePerm(c.env, c.session, 'finance.read');
+    const ap: any = await owned(c.env, 'accounts_payable', c.params.id, s.companyId);
+    const obj = ap.attachment_key ? await c.env.FILES?.get(ap.attachment_key) : null;
+    if (!obj) throw new HttpError(404, 'not_found');
+    return new Response(obj.body, { headers: { 'content-type': ap.attachment_type, 'content-disposition': `inline; filename="${ap.attachment_name}"`, 'x-content-type-options': 'nosniff', 'cache-control': 'private, no-store', 'content-security-policy': "default-src 'none'" } });
+  });
+
   r.post('/api/finance/payables/:id/cancel', async (c) => {
     const s = await requirePerm(c.env, c.session, 'finance.write');
     const ap = await refreshPayable(c.env, s.companyId, c.params.id);

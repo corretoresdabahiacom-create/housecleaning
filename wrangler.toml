@@ -43,7 +43,11 @@ APP_ENV = "development"
 
 [env.staging]
 name = "house-cleaning-management-staging"
-vars = { APP_ENV = "staging" }
+vars = { APP_ENV = "staging", FIREBASE_PROJECT_ID = "housecleaning-b528b", FIREBASE_API_KEY = "AIzaSyDuOcqoCiYiUIDUwHkY0oNNt9IBjIUXqog", FIREBASE_AUTH_DOMAIN = "housecleaning-b528b.firebaseapp.com" }
+# Free file storage (photos, attachments, receipts) on Workers KV — used automatically while R2 is not enabled.
+[[env.staging.kv_namespaces]]
+binding = "FILES_KV"
+id = "2f15633d51754a4b851836e60e485639"
 [[env.staging.d1_databases]]
 binding = "DB"
 database_name = "hcm-db-staging"

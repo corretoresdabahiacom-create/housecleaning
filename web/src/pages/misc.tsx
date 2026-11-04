@@ -200,6 +200,19 @@ function MfaCard() {
   </Card>;
 }
 
+function AuditCard() {
+  const { t } = useT();
+  const [open, setOpen] = useState(false);
+  const log = useLoad(() => (open ? get('/api/audit') : Promise.resolve(null)), [open]);
+  return <Card title={t('Audit log')} actions={<button className="btn sm" onClick={() => setOpen(!open)}>{open ? t('Hide') : t('View')}</button>}>
+    <p className="muted small">{t('Who did what in your company account (last 300 events). Sensitive contents are never recorded.')}</p>
+    {open && (!log.data ? <Loading /> : <Table rows={log.data.items} cols={[
+      { key: 'created_at', label: 'Date', render: (r) => new Date(r.created_at).toLocaleString() }, { key: 'user_name', label: 'User' },
+      { key: 'action', label: 'Action' }, { key: 'entity', label: 'Record' },
+    ]} />)}
+  </Card>;
+}
+
 export function Settings() {
   const { t, lang, setLang } = useT(); const { me } = useMe(); const onErr = useErr();
   const sessions = useLoad(() => get('/api/auth/sessions'), []);
@@ -224,6 +237,7 @@ export function Settings() {
           { key: 'status', label: 'Status', render: (r) => r.role === 'owner' ? <Badge s={r.status} /> : <button className="btn sm ghost" onClick={async () => { try { await put(`/api/members/${r.id}`, { status: r.status === 'active' ? 'disabled' : 'active' }); members.reload(); } catch (e) { onErr(e); } }}><Badge s={r.status} /></button> }]} />
         <p className="muted small">{t('Permissions are enforced by the server. Schedulers cannot see finances; helpers only see their own messages.')}</p>
       </Card>}
+      {canUi(me, 'manage') && <AuditCard />}
       {me.role === 'owner' && <Card title={t('Danger zone')}><button className="btn danger" onClick={() => setDel(true)}>{t('Delete company account')}</button></Card>}
       <Card title={t('Legal')}><p className="small muted">{t('This application is a management tool. It is not a payroll provider, staffing agency, employer of record, or legal/tax compliance service. Financial reports should be reviewed by a qualified US accountant or CPA.')}</p></Card>
       {adding && <Modal title={t('Add user')} onClose={() => setAdding(false)}><Form fields={[
