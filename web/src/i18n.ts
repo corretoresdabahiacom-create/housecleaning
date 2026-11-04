@@ -245,6 +245,9 @@ const T: Row[] = [
   ['Google sign-in could not be verified.', 'Não foi possível verificar o login com Google.', 'No se pudo verificar el inicio con Google.'], ['Your Google email is not verified.', 'Seu e-mail do Google não está verificado.', 'Su correo de Google no está verificado.'],
   ['Google sign-in is not configured.', 'O login com Google não está configurado.', 'El inicio con Google no está configurado.'], ['Google sign-in is temporarily unavailable.', 'O login com Google está temporariamente indisponível.', 'El inicio con Google no está disponible temporalmente.'],
   ['must match your Google email', 'deve ser igual ao seu e-mail do Google', 'debe coincidir con su correo de Google'],
+  ['This site is not authorized in Firebase (Authentication → Settings → Authorized domains).', 'Este site não está autorizado no Firebase (Authentication → Configurações → Domínios autorizados).', 'Este sitio no está autorizado en Firebase (Authentication → Configuración → Dominios autorizados).'],
+  ['Google sign-in is not enabled in Firebase (Authentication → Sign-in method).', 'O login com Google não está ativado no Firebase (Authentication → Método de login).', 'El inicio con Google no está activado en Firebase (Authentication → Método de acceso).'],
+  ['Google sign-in failed.', 'O login com Google falhou.', 'Falló el inicio con Google.'],
   // coded values
   ['One-time', 'Avulsa', 'Única'], ['Daily', 'Diária', 'Diaria'], ['Weekly', 'Semanal', 'Semanal'], ['Twice per week', 'Duas vezes por semana', 'Dos veces por semana'], ['Every two weeks', 'Quinzenal', 'Cada dos semanas'],
   ['Every three weeks', 'A cada três semanas', 'Cada tres semanas'], ['Monthly', 'Mensal', 'Mensual'], ['Every two months', 'Bimestral', 'Cada dos meses'], ['Custom recurring schedule', 'Recorrência personalizada', 'Recurrencia personalizada'],

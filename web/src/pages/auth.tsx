@@ -46,7 +46,14 @@ export function AuthScreen({ onDone }: { onDone: () => void }) {
       }
     } catch (e: any) {
       if (e?.code === 'auth/popup-closed-by-user' || e?.code === 'auth/cancelled-popup-request') return;
-      toast(e instanceof ApiError ? t(e.code) : t('Google sign-in failed. Check that pop-ups are allowed.'), 'err');
+      const code = String(e?.code || e?.message || 'unknown');
+      const msg = e instanceof ApiError ? t(e.code)
+        : code === 'auth/popup-blocked' ? t('Google sign-in failed. Check that pop-ups are allowed.')
+        : code === 'auth/unauthorized-domain' ? t('This site is not authorized in Firebase (Authentication → Settings → Authorized domains).')
+        : code === 'auth/operation-not-allowed' ? t('Google sign-in is not enabled in Firebase (Authentication → Sign-in method).')
+        : `${t('Google sign-in failed.')} (${code})`;
+      console.error('Google sign-in error', code, e);
+      toast(msg, 'err');
     }
   };
   const GoogleButton = () => firebase ? <><div className="or"><span>{t('or')}</span></div>
