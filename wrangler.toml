@@ -1,6 +1,6 @@
 # Cloudflare configuration. Resource IDs are placeholders: create resources with the commands in docs/DEPLOYMENT.md.
 name = "house-cleaning-management"
-account_id = "38447d80d8f04048737c82c96665f780"
+account_id = "482924a511dc80daef8b993440cfde2a"
 main = "worker/src/index.ts"
 compatibility_date = "2025-07-18"
 
@@ -47,11 +47,12 @@ vars = { APP_ENV = "staging" }
 [[env.staging.d1_databases]]
 binding = "DB"
 database_name = "hcm-db-staging"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "3db2d045-d401-4e15-aafc-4fdd9e7bd0c6"
 migrations_dir = "migrations"
-[[env.staging.r2_buckets]]
-binding = "FILES"
-bucket_name = "hcm-files-staging"
+# R2 (photos/attachments) — enable R2 in the dashboard, run `npx wrangler r2 bucket create hcm-files-staging`, then uncomment:
+# [[env.staging.r2_buckets]]
+# binding = "FILES"
+# bucket_name = "hcm-files-staging"
 [env.staging.triggers]
 crons = ["*/15 * * * *"]
 [[env.staging.durable_objects.bindings]]

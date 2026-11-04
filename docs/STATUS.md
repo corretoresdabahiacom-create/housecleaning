@@ -15,6 +15,7 @@
 | 8 Admin & reports | 22 CSV reports, dashboard, platform admin (aggregate only), job monitoring |
 | 9 Security & QA | 29 automated tests passing, security self-audit, `npm audit` clean |
 | 11 Round 2 | MFA, company purge, key rotation, Turnstile, browser E2E tests, PDF/XLSX export, real-time chat, translation, property photos, time zone setting, autocomplete, subscription plans, WhatsApp Cloud API, route suggestion |
+| 12 Staging deployed | https://house-cleaning-management-staging.pintolimadistribuidora.workers.dev (2026-11-04). D1 migrated, ENCRYPTION_KEY secret set, cron and Durable Object active. R2 pending activation in the dashboard (photos/attachments disabled until then). |
 | 10 Staging | Prepared (`wrangler.toml` staging env, [DEPLOYMENT.md](DEPLOYMENT.md)); **not deployed** — needs your Cloudflare login |
 
 ## Implemented and tested (automated)
