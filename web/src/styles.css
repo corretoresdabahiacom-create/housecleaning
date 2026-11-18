@@ -176,3 +176,15 @@ td { padding: 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
 .or { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: .85rem; margin: 12px 0 8px; } .or::before, .or::after { content: ''; flex: 1; height: 1px; background: var(--line); }
 .btn.google { width: 100%; justify-content: center; gap: 10px; color: #1f1f1f; border-color: #dadce0; }
 .end-inline { justify-content: flex-end; } .attach { margin: 8px 0 12px; }
+
+/* ── Mobile "My day", invites, billing ── */
+.daynav,.dayname{display:flex;align-items:center}.daynav{gap:.5rem;margin-bottom:1rem}.dayname{flex:1;flex-direction:column;text-align:center}.dayname small{color:var(--muted,#667)}
+.card.myday{display:grid;gap:.4rem;margin-bottom:.9rem}.card.myday.is-done{opacity:.75}
+.big-time{font-size:1.6rem;color:var(--navy,#142d52)}.svc{font-weight:600}
+.accessbox{background:#fff7e0;border:1px solid #e8d48a;border-radius:8px;padding:.6rem .75rem;white-space:pre-wrap;word-break:break-word}
+.btn.big{min-height:48px;font-size:1.05rem;flex:1}.actions{margin-top:.4rem}
+.finish-box{display:grid;gap:.6rem;border-top:1px solid #e3e7ee;padding-top:.7rem;margin-top:.4rem}
+.addr{display:block;word-break:break-word}
+.auth-card.center{text-align:center}.logo.big{width:64px;height:64px;font-size:2rem;margin:0 auto 1rem;display:grid;place-items:center}
+.linkbox{display:flex;gap:.5rem}.linkbox input{flex:1;min-width:0;font-family:ui-monospace,monospace;font-size:.8rem}
+.plan-row{display:flex;justify-content:space-between;align-items:center;gap:.75rem;padding:.55rem 0;border-bottom:1px solid #eef0f4;flex-wrap:wrap}

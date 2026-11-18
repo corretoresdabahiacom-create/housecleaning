@@ -34,6 +34,17 @@ export interface Env {
   FIREBASE_AUTH_DOMAIN?: string;   // retention before hard purge of deleted companies (default 30)
   APP_ENV?: string;            // 'development' | 'staging' | 'production'
   APP_ORIGIN?: string;
+  RESEND_API_KEY?: string;     // transactional email (secret); with MAIL_FROM, e.g. "House Cleaning <no-reply@yourdomain.com>"
+  MAIL_FROM?: string;
+  VAPID_PUBLIC_KEY?: string;   // Web Push (base64url uncompressed P-256 point); private key is a secret
+  VAPID_PRIVATE_KEY?: string;
+  VAPID_SUBJECT?: string;      // mailto: or https: contact for push services
+  STRIPE_SECRET_KEY?: string;  // platform Stripe key for plan subscriptions (secret)
+  STRIPE_WEBHOOK_SECRET?: string;
+  TWILIO_ACCOUNT_SID?: string; // SMS reminders (optional)
+  TWILIO_AUTH_TOKEN?: string;
+  TWILIO_FROM?: string;
+  WHATSAPP_REMINDER_TEMPLATE?: string;  // approved Meta template name used for business-initiated reminders
 }
 
 export interface Session {

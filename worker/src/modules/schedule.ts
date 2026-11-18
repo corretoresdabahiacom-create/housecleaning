@@ -2,6 +2,15 @@ import { Env, HttpError, Router, Session, hourlyAmount, json, nowIso, todayIn, u
 import { occurrences, overlaps } from '../lib/recurrence';
 import { audit, owned, requirePerm } from '../lib/security';
 import { helperLaborCategory } from './seed';
+import { notifyUsers, pushText, userIdsForHelpers } from '../lib/webpush';
+
+/** Push notice to the users linked to these helpers. Never blocks or fails the scheduling action. */
+async function pushHelpers(env: Env, companyId: string, helperIds: string[], key: 'new_service' | 'service_changed' | 'service_canceled', date: string, time: string) {
+  try {
+    const users = await userIdsForHelpers(env, companyId, helperIds);
+    await notifyUsers(env, companyId, users, (lang) => ({ title: pushText(key, lang), body: `${date} ${time}`, url: '/#/my-day', tag: `appt-${date}-${time}` }));
+  } catch { /* best effort */ }
+}
 
 const FREQ = ['once', 'daily', 'weekly', 'twice_weekly', 'biweekly', 'triweekly', 'monthly', 'bimonthly', 'custom'] as const;
 const STATUSES = ['scheduled', 'confirmed', 'in_progress', 'completed', 'canceled', 'rescheduled', 'customer_unavailable', 'pending_confirmation'] as const;
@@ -120,7 +129,7 @@ function assertEditable(a: any) {
 }
 
 /** Completion: creates the receivable and helper payables atomically. Duplicate-proof via UNIQUE constraints. */
-async function completeAppointment(env: Env, s: Session, a: any, attendanceIn: any[] | undefined) {
+export async function completeAppointment(env: Env, s: Session, a: any, attendanceIn: any[] | undefined) {
   const att = new Map<string, { attendance: string; worked_minutes?: number }>();
   for (const x of attendanceIn || []) {
     const v = validate(x, { helper_id: { type: 'string', required: true }, attendance: { type: 'enum', values: ['completed', 'absent'], required: true }, worked_minutes: { type: 'int', min: 1, max: 1440 } });
@@ -199,6 +208,7 @@ export function scheduleRoutes(r: Router) {
     const id = uid();
     await insertAppointment(c.env, s, { ...v, id, customer_id: p.customer_id, duration_minutes: dur, base_price_cents: v.price ?? (await resolvePrice(c.env, s.companyId, p, v.service_id)), detached: 1 }, helpers);
     await audit(c.env, s, 'create', 'appointment', id, conflicts.length ? { conflicts_overridden: conflicts.length } : undefined);
+    await pushHelpers(c.env, s.companyId, helpers.map((h) => h.helper_id), 'new_service', v.date, v.start_time);
     return json({ id, warnings: conflicts }, 201);
   });
 
@@ -228,11 +238,13 @@ export function scheduleRoutes(r: Router) {
     const helpers = await normalizeHelpers(c.env, s, a.property_id, b?.helpers ?? []);
     const conflicts = await findConflicts(c.env, s.companyId, helpers.map((h) => h.helper_id), a.date, a.start_time, a.duration_minutes, a.id);
     if (conflicts.length && !b.force) throw new HttpError(409, 'schedule_conflict', conflicts);
+    const before = new Set(((await c.env.DB.prepare('SELECT helper_id FROM appointment_helpers WHERE appointment_id=? AND company_id=?').bind(a.id, s.companyId).all<any>()).results).map((x) => x.helper_id));
     await c.env.DB.batch([
       c.env.DB.prepare('DELETE FROM appointment_helpers WHERE appointment_id=? AND company_id=?').bind(a.id, s.companyId),
       ...helpers.map((h) => c.env.DB.prepare('INSERT INTO appointment_helpers (company_id,appointment_id,helper_id,pay_basis,rate_cents) VALUES (?,?,?,?,?)').bind(s.companyId, a.id, h.helper_id, h.pay_basis, h.rate_cents)),
       c.env.DB.prepare('UPDATE cleaning_appointments SET detached=1, updated_at=? WHERE id=?').bind(nowIso(), a.id),
     ]);
+    await pushHelpers(c.env, s.companyId, helpers.map((h) => h.helper_id).filter((h) => !before.has(h)), 'new_service', a.date, a.start_time);
     return json({ ok: true, warnings: conflicts });
   });
 
@@ -267,6 +279,8 @@ export function scheduleRoutes(r: Router) {
       await completeAppointment(c.env, s, a, b.attendance);
     } else {
       const now = nowIso();
+      const assigned = v.status === 'canceled' ? ((await c.env.DB.prepare('SELECT helper_id FROM appointment_helpers WHERE appointment_id=? AND company_id=?').bind(a.id, s.companyId).all<any>()).results).map((x) => x.helper_id as string) : [];
+      if (assigned.length) await pushHelpers(c.env, s.companyId, assigned, 'service_canceled', a.date, a.start_time);
       await c.env.DB.batch([
         c.env.DB.prepare('UPDATE cleaning_appointments SET status=?, detached=1, updated_at=? WHERE id=? AND company_id=?').bind(v.status, now, a.id, s.companyId),
         ...(v.status === 'canceled' ? [c.env.DB.prepare("UPDATE appointment_helpers SET attendance='canceled' WHERE appointment_id=? AND company_id=?").bind(a.id, s.companyId)] : []),
@@ -295,6 +309,7 @@ export function scheduleRoutes(r: Router) {
       c.env.DB.prepare("UPDATE cleaning_appointments SET status='rescheduled', detached=1, updated_at=? WHERE id=?").bind(now, a.id),
       c.env.DB.prepare('INSERT INTO appointment_status_history (id,company_id,appointment_id,from_status,to_status,changed_by,changed_at) VALUES (?,?,?,?,?,?,?)').bind(uid(), s.companyId, a.id, a.status, 'rescheduled', s.userId, now),
     ]);
+    await pushHelpers(c.env, s.companyId, helpers.map((h) => h.helper_id), 'service_changed', v.date, v.start_time);
     return json({ id, warnings: conflicts }, 201);
   });
 

@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { api, fmtMoney, get, post, put, waUrl } from '../api';
+import { InvitesCard, BillingCard, PaymentsCard } from './connect';
+import { PushCard } from './mobile';
 import { Badge, Card, Empty, ExportButtons, Form, Loading, Modal, Page, Period, PeriodPicker, Stat, Table, canUi, periodFor, toast, useErr, useLoad, useMe, useT } from '../ui';
 
 export function Dashboard() {
@@ -170,6 +172,17 @@ function CompanyCard() {
     {me.config?.whatsapp_available
       ? <label className="chip"><input type="checkbox" checked={!!me.company.whatsapp_enabled} onChange={(e) => save({ whatsapp_enabled: e.target.checked })} />{t('Allow sending messages to helpers through WhatsApp')}</label>
       : <small className="muted">{t('WhatsApp sending is not configured on this server. Contact links still work.')}</small>}
+    <h3>{t('Helpers')}</h3>
+    <label className="chip"><input type="checkbox" checked={!!me.company.helpers_can_complete} onChange={(e) => save({ helpers_can_complete: e.target.checked })} />{t('Helpers can complete services from “My day”')}</label>
+    <small className="muted">{t('When on, the service is completed automatically after every assigned helper taps Finish. When off, the office confirms it.')}</small>
+    <h3>{t('Customer reminders')}</h3>
+    <label className="field"><span>{t('Send a reminder 24 hours before the service')}</span>
+      <select value={me.company.reminder_channel || 'off'} onChange={(e) => save({ reminder_channel: e.target.value })}>
+        <option value="off">{t('Off')}</option>
+        <option value="whatsapp" disabled={!me.config?.whatsapp_reminders_available}>WhatsApp{me.config?.whatsapp_reminders_available ? '' : ' (' + t('not configured') + ')'}</option>
+        <option value="sms" disabled={!me.config?.sms_available}>SMS{me.config?.sms_available ? '' : ' (' + t('not configured') + ')'}</option>
+      </select></label>
+    <small className="muted">{t('Only customers with “Allow service reminders” turned on receive them. Make sure you have their consent.')}</small>
   </Card>;
 }
 
@@ -227,6 +240,7 @@ export function Settings() {
           <label className="field"><span>{t('Language')}</span><select value={lang} onChange={(e) => { setLang(e.target.value as any); put('/api/auth/language', { language: e.target.value }); }}><option value="en">English</option><option value="pt">Português</option><option value="es">Español</option></select></label>
         </Card>
         <MfaCard />
+        <PushCard />
         {canUi(me, 'manage') && <CompanyCard />}
         <Card title={t('Active sessions')} actions={<button className="btn sm" onClick={async () => { await post('/api/auth/sessions/revoke-others'); sessions.reload(); toast(t('Other sessions signed out')); }}>{t('Sign out other sessions')}</button>}>
           <ul className="list">{sessions.data?.sessions.map((s: any) => <li key={s.id}><span>{(s.user_agent || '—').slice(0, 60)}</span><small className="muted">{s.created_at.slice(0, 16).replace('T', ' ')}{s.current ? ` · ${t('this device')}` : ''}</small></li>)}</ul>
@@ -237,6 +251,9 @@ export function Settings() {
           { key: 'status', label: 'Status', render: (r) => r.role === 'owner' ? <Badge s={r.status} /> : <button className="btn sm ghost" onClick={async () => { try { await put(`/api/members/${r.id}`, { status: r.status === 'active' ? 'disabled' : 'active' }); members.reload(); } catch (e) { onErr(e); } }}><Badge s={r.status} /></button> }]} />
         <p className="muted small">{t('Permissions are enforced by the server. Schedulers cannot see finances; helpers only see their own messages.')}</p>
       </Card>}
+      {canUi(me, 'manage') && <InvitesCard helpers={helpers.data?.items || []} />}
+      {canUi(me, 'manage') && <BillingCard />}
+      {canUi(me, 'manage') && <PaymentsCard />}
       {canUi(me, 'manage') && <AuditCard />}
       {me.role === 'owner' && <Card title={t('Danger zone')}><button className="btn danger" onClick={() => setDel(true)}>{t('Delete company account')}</button></Card>}
       <Card title={t('Legal')}><p className="small muted">{t('This application is a management tool. It is not a payroll provider, staffing agency, employer of record, or legal/tax compliance service. Financial reports should be reviewed by a qualified US accountant or CPA.')}</p></Card>

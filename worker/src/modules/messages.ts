@@ -1,5 +1,6 @@
 import { Env, HttpError, Router, Session, json, nowIso, uid, validate } from '../lib/core';
 import { owned, requirePerm } from '../lib/security';
+import { notifyUsers, pushText, staffUserIds, userIdsForHelpers } from '../lib/webpush';
 import { connectRealtime, notifyRealtime } from '../realtime';
 
 export const MESSAGE_TTL_MS = 24 * 3600 * 1000;
@@ -54,6 +55,11 @@ async function insertMessage(env: Env, s: Session, convId: string, body: string,
     .bind(id, s.companyId, convId, s.userId, side, body, att?.key ?? null, att?.name ?? null, att?.type ?? null, created.toISOString(), new Date(created.getTime() + MESSAGE_TTL_MS).toISOString()).run();
   const conv = await env.DB.prepare('SELECT helper_id FROM conversations WHERE id=?').bind(convId).first<any>();
   await notifyRealtime(env, s.companyId, { conversation_id: convId, helper_id: conv?.helper_id });
+  // Push notice without any message content: helper → staff, staff → the helper's linked user.
+  try {
+    const targets = side === 'company' ? await userIdsForHelpers(env, s.companyId, conv?.helper_id ? [conv.helper_id] : []) : await staffUserIds(env, s.companyId, ['owner', 'admin', 'manager', 'scheduler']);
+    await notifyUsers(env, s.companyId, targets.filter((u) => u !== s.userId), (lang) => ({ title: pushText('new_message', lang), body: '', url: '/#/messages', tag: `msg-${convId}` }));
+  } catch { /* best effort */ }
   return id;
 }
 

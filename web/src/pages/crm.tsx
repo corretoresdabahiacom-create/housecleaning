@@ -12,6 +12,7 @@ const customerFields: FieldDef[] = [
   { name: 'whatsapp', label: 'WhatsApp number', type: 'tel' }, { name: 'email', label: 'Email', type: 'email' },
   { name: 'language', label: 'Preferred language', type: 'select', options: LANG_OPTIONS }, { name: 'contact_person', label: 'Additional contact person' },
   { name: 'status', label: 'Status', type: 'select', options: STATUS_OPTIONS }, { name: 'notes', label: 'Notes', type: 'textarea' },
+  { name: 'reminder_opt_in', label: 'Allow service reminders (WhatsApp/SMS, 24h before)', type: 'checkbox', full: true },
 ];
 
 export function Customers() {

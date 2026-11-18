@@ -52,11 +52,12 @@ In addition, the app was run on the actual Workers runtime (`wrangler dev`, work
 | Routes | haversine, nearest-neighbor, coordinate validation, Census geocoder request |
 | Plans | admin-only, property and user limits (402), assignment |
 | i18n | every UI string has PT and ES translations |
+| Round 4 | email, invitations (password/Google/existing account/limits/revoke/expiry), My day, Web Push (RFC 8291 vector, VAPID JWT, no private data, 410 pruning), Stripe (signatures, plan checkout, payment links, tenant isolation), reminders (window, idempotency, retries), feature flags |
 | Browser E2E | register → customer → residence (autocomplete) → helper → schedule (autocomplete) → complete → finance figures → PDF/XLSX download; EN/PT/ES switch; real-time chat between owner and helper (< 5 s); MFA enable and login; mobile drawer and no horizontal overflow |
 
 ## Not covered by automated tests
 
 - Load/performance testing and D1 limits under concurrency.
-- Real email delivery (no provider configured).
+- Real email delivery, real push delivery, live Stripe/Twilio/WhatsApp-template calls (mocked in tests).
 - Live calls to Turnstile, Meta WhatsApp, Workers AI and the Census geocoder (mocked in tests).
 - Deployed staging environment (not deployed).

@@ -11,7 +11,7 @@ const BASIS = ['fixed', 'daily', 'hourly', 'other'] as const;
 const customerSchema = {
   full_name: { type: 'string', required: true, max: 120 }, phone: { type: 'string', max: 30 }, whatsapp: { type: 'string', max: 30 },
   email: { type: 'email' }, language: { type: 'enum', values: LANGS }, contact_person: { type: 'string', max: 120 },
-  notes: { type: 'string', max: 4000 }, status: { type: 'enum', values: STATUS },
+  notes: { type: 'string', max: 4000 }, status: { type: 'enum', values: STATUS }, reminder_opt_in: { type: 'bool' },
 } as const;
 
 const propertySchema = {
@@ -71,8 +71,8 @@ export function crmRoutes(r: Router) {
     const s = await requirePerm(c.env, c.session, 'customers.write');
     const v = validate(await c.body(), customerSchema);
     const id = uid(), now = nowIso();
-    await c.env.DB.prepare(`INSERT INTO customers (id,company_id,full_name,phone,whatsapp,email,language,contact_person,notes,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
-      .bind(id, s.companyId, v.full_name, v.phone ?? null, v.whatsapp ?? null, v.email ?? null, v.language || 'en', v.contact_person ?? null, v.notes ?? null, v.status || 'active', now, now).run();
+    await c.env.DB.prepare(`INSERT INTO customers (id,company_id,full_name,phone,whatsapp,email,language,contact_person,notes,status,reminder_opt_in,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .bind(id, s.companyId, v.full_name, v.phone ?? null, v.whatsapp ?? null, v.email ?? null, v.language || 'en', v.contact_person ?? null, v.notes ?? null, v.status || 'active', v.reminder_opt_in ?? 0, now, now).run();
     await audit(c.env, s, 'create', 'customer', id);
     return json({ id }, 201);
   });

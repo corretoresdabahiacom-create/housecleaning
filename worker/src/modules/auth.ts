@@ -6,6 +6,7 @@ import {
 import { seedCompanyDefaults } from './seed';
 import { verifyFirebaseIdToken } from '../lib/firebase';
 import { checkPlanLimit } from './reports';
+import { appOrigin, sendMail } from '../lib/email';
 
 const LANGS = ['en', 'pt', 'es'] as const;
 const ip = (c: Ctx) => c.req.headers.get('cf-connecting-ip') || 'local';
@@ -16,8 +17,8 @@ async function issueToken(env: Env, userId: string, kind: 'verify_email' | 'rese
     .bind(await sha256(token), userId, kind, new Date(Date.now() + hours * 36e5).toISOString(), nowIso()).run();
   return token;
 }
-// Email delivery requires a configured provider (not included). In development the token is returned
-// so flows can be tested end-to-end; in other environments it is never exposed in responses or logs.
+// Emails go through Resend when RESEND_API_KEY + MAIL_FROM are configured (lib/email.ts). In development the token is also
+// returned so flows can be tested end-to-end; in other environments it is never exposed in responses or logs.
 const devToken = (env: Env, t: string) => (env.APP_ENV === 'development' ? { dev_token: t } : {});
 
 export function authRoutes(r: Router) {
@@ -51,6 +52,7 @@ export function authRoutes(r: Router) {
     await seedCompanyDefaults(c.env, companyId);
     if (google) await c.env.DB.prepare('UPDATE users SET google_uid=?, email_verified_at=? WHERE id=?').bind(google.uid, now, userId).run();
     const token = google ? '' : await issueToken(c.env, userId, 'verify_email', 48);
+    if (token) await sendMail(c.env, { to: v.email, kind: 'verify_email', lang: v.language, link: `${appOrigin(c.env, c.req)}/#/?verify=${token}`, companyId });
     const s = await createSession(c.env, userId, companyId, c.req.headers.get('user-agent'));
     await audit(c.env, { userId, companyId } as any, 'register', 'company', companyId);
     return json({ ok: true, user_id: userId, company_id: companyId, ...(token ? devToken(c.env, token) : {}) }, 201, { 'set-cookie': sessionCookie(s.token, c.env) });
@@ -169,8 +171,9 @@ export function authRoutes(r: Router) {
   r.get('/api/auth/me', async (c) => {
     const s = c.session!;
     const u = await c.env.DB.prepare('SELECT id,email,full_name,language,email_verified_at,is_platform_admin,mfa_enabled FROM users WHERE id=?').bind(s.userId).first();
-    const co = await c.env.DB.prepare('SELECT id,name,state,city,phone,currency,timezone,status,whatsapp_enabled,subscription_status,plan_id FROM companies WHERE id=?').bind(s.companyId).first();
-    return json({ user: u, company: co, role: s.role, helper_id: s.helperId, config: { turnstile_site_key: c.env.TURNSTILE_SITE_KEY || null, whatsapp_available: !!(c.env.WHATSAPP_TOKEN && c.env.WHATSAPP_PHONE_NUMBER_ID), translation_available: !!c.env.AI } });
+    const co = await c.env.DB.prepare('SELECT id,name,state,city,phone,currency,timezone,status,whatsapp_enabled,subscription_status,plan_id,helpers_can_complete,reminder_channel FROM companies WHERE id=?').bind(s.companyId).first();
+    const pay = await c.env.DB.prepare('SELECT 1 FROM company_payment_settings WHERE company_id=? AND stripe_key_enc IS NOT NULL').bind(s.companyId).first();
+    return json({ user: u, company: co, role: s.role, helper_id: s.helperId, payments_enabled: !!pay, config: { turnstile_site_key: c.env.TURNSTILE_SITE_KEY || null, whatsapp_available: !!(c.env.WHATSAPP_TOKEN && c.env.WHATSAPP_PHONE_NUMBER_ID), translation_available: !!c.env.AI, email_available: !!(c.env.RESEND_API_KEY && c.env.MAIL_FROM), push_available: !!(c.env.VAPID_PUBLIC_KEY && c.env.VAPID_PRIVATE_KEY), billing_available: !!c.env.STRIPE_SECRET_KEY, sms_available: !!(c.env.TWILIO_ACCOUNT_SID && c.env.TWILIO_AUTH_TOKEN && c.env.TWILIO_FROM), whatsapp_reminders_available: !!(c.env.WHATSAPP_TOKEN && c.env.WHATSAPP_PHONE_NUMBER_ID && c.env.WHATSAPP_REMINDER_TEMPLATE) } });
   });
 
   r.put('/api/auth/language', async (c) => {
@@ -188,16 +191,23 @@ export function authRoutes(r: Router) {
 
   r.post('/api/auth/resend-verification', async (c) => {
     await rateLimit(c.env, `verify:${c.session!.userId}`, 5, 3600);
+    const u = await c.env.DB.prepare('SELECT email, language, email_verified_at FROM users WHERE id=?').bind(c.session!.userId).first<any>();
+    if (u.email_verified_at) return json({ ok: true, already_verified: true });
     const t = await issueToken(c.env, c.session!.userId, 'verify_email', 48);
-    return json({ ok: true, ...devToken(c.env, t) });
+    const mail = await sendMail(c.env, { to: u.email, kind: 'verify_email', lang: u.language, link: `${appOrigin(c.env, c.req)}/#/?verify=${t}`, companyId: c.session!.companyId });
+    return json({ ok: true, email: mail.status, ...devToken(c.env, t) });
   });
 
   r.post('/api/auth/forgot-password', async (c) => {
     const v = validate(await c.body(), { email: { type: 'email', required: true } });
     await rateLimit(c.env, `forgot:${ip(c)}`, 5, 3600);
-    const u = await c.env.DB.prepare('SELECT id FROM users WHERE email=? AND deleted_at IS NULL').bind(v.email).first<any>();
+    const u = await c.env.DB.prepare('SELECT id, language FROM users WHERE email=? AND deleted_at IS NULL').bind(v.email).first<any>();
     let extra = {};
-    if (u) extra = devToken(c.env, await issueToken(c.env, u.id, 'reset_password', 1));
+    if (u) {
+      const t = await issueToken(c.env, u.id, 'reset_password', 1);
+      await sendMail(c.env, { to: v.email, kind: 'reset_password', lang: u.language, link: `${appOrigin(c.env, c.req)}/#/?reset=${t}` });
+      extra = devToken(c.env, t);
+    }
     return json({ ok: true, ...extra }); // same response whether or not the account exists
   }, false);
 
@@ -289,7 +299,7 @@ export function authRoutes(r: Router) {
   // ── Company settings (name, phone, time zone, WhatsApp opt-in) ──
   r.put('/api/company', async (c) => {
     const s = await requirePerm(c.env, c.session, 'company.manage');
-    const v: any = validate(await c.body(), { name: { type: 'string', max: 120 }, phone: { type: 'string', max: 30 }, timezone: { type: 'string', max: 60 }, whatsapp_enabled: { type: 'bool' } }, true);
+    const v: any = validate(await c.body(), { name: { type: 'string', max: 120 }, phone: { type: 'string', max: 30 }, timezone: { type: 'string', max: 60 }, whatsapp_enabled: { type: 'bool' }, helpers_can_complete: { type: 'bool' }, reminder_channel: { type: 'enum', values: ['off', 'whatsapp', 'sms'] } }, true);
     if (v.timezone) { try { new Intl.DateTimeFormat('en-US', { timeZone: v.timezone }); } catch { throw new HttpError(422, 'validation_error', { timezone: 'invalid' }); } }
     const cols = Object.keys(v);
     if (!cols.length) throw new HttpError(422, 'nothing_to_update');
@@ -315,11 +325,11 @@ export function authRoutes(r: Router) {
 }
 
 /** Shared end of every login path: company selection, MFA challenge, session cookie. */
-async function finishLogin(c: Ctx, u: any) {
+export async function finishLogin(c: Ctx, u: any, companyId?: string) {
   const m = await c.env.DB.prepare(
     `SELECT m.company_id FROM company_members m JOIN companies co ON co.id=m.company_id
-      WHERE m.user_id=? AND m.status='active' AND (co.status='active' OR ?=1) ORDER BY m.created_at LIMIT 1`)
-    .bind(u.id, u.is_platform_admin).first<any>();
+      WHERE m.user_id=? AND m.status='active' AND (co.status='active' OR ?=1) AND (? IS NULL OR m.company_id=?) ORDER BY m.created_at LIMIT 1`)
+    .bind(u.id, u.is_platform_admin, companyId ?? null, companyId ?? null).first<any>();
   if (!m) throw new HttpError(403, 'no_active_company');
   if (u.mfa_enabled) {
     // First factor OK → short-lived MFA challenge; the session is created only after the TOTP step.

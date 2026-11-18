@@ -40,10 +40,18 @@ Authentication and sessions · rate limiting · CSRF protection · company regis
 | Autocomplete | Server-side search selectors replace 200-item dropdowns in all forms | Browser E2E |
 | Subscription plans | Admin plans, assignment, trial/active/past_due/canceled, property and user limits enforced (402) | API test |
 | WhatsApp | Meta WhatsApp Cloud API text sending, opt-in per company, delivery log, failures never block in-app delivery | API test with mocked Meta API |
+| Email | Resend REST: verification, password reset, invitations (EN/PT/ES). No-op until `RESEND_API_KEY` + `MAIL_FROM` are set; outcome-only log, never links | API test with mocked Resend |
+| Invitations by link | Owner/admin/manager invites by email+role (single-use, 7 days, hashed token, shown once); accept with the matching Google account or a password; helper role bound to a helper record; plan limits and role rules enforced | API tests |
+| "My day" (helper) | Mobile view of today's/another day's services, address, access instructions (decrypted only for the assigned helper, today/tomorrow, audited), start and finish | API tests + browser E2E (login lands on it) |
+| PWA + push | Installable (manifest, icons, service worker). Standard Web Push (RFC 8030/8291/8292, VAPID) for new/changed/canceled service and new message; payloads carry no private data | RFC 8291 test vector, round-trip decrypt, pruning on 410 |
+| Plan billing | Stripe Checkout + customer portal for subscription plans; signed webhook (HMAC, 5 min tolerance, idempotent) | API tests with mocked Stripe |
+| Customer payment links | Each company connects its own Stripe key (stored encrypted); link per receivable; webhook records the receipt (integer cents, idempotent) | API tests, tenant isolation |
+| Appointment reminders | Cron every 15 min; 24 h before; WhatsApp (approved template) or SMS (Twilio); per-customer opt-in; at-most-once claim, 3 attempts | API tests with mocked providers |
 | Route suggestion | US Census geocoding; nearest-neighbor order by straight-line distance; Google Maps directions link | Unit + API test |
 
 ## Implemented but not fully tested
 
+- **Resend, Web Push services, Stripe, Twilio and WhatsApp templates against the real services** — round-4 integrations are tested against mocks that follow the providers' documented formats; none was exercised live. Push encryption matches the RFC 8291 test vector, but delivery through real browser push services has not been observed.
 - **Turnstile, WhatsApp, Workers AI and Census geocoder against the real services** — integrations tested against mocked responses that follow the providers' documented formats; not exercised live (no credentials / network access from the build environment).
 - **Durable Object in production** — tested on local workerd; not yet deployed.
 - **Cron retry/backoff** — verified locally; long-running behavior not observed.
@@ -51,21 +59,22 @@ Authentication and sessions · rate limiting · CSRF protection · company regis
 
 ## Not implemented
 
-- Real email sending (needs a provider).
+- Firebase Cloud Messaging: push uses the standard Web Push protocol instead (no Firebase SDK/service account needed; works in Chrome, Edge, Firefox and iOS 16.4+ installed PWAs).
+- Stripe fees are not booked as expenses (receipts are the gross amount). Subscription billing has no dunning beyond Stripe's own.
+- Inbound STOP/opt-out handling for SMS/WhatsApp reminders (opt-in is per customer in the app); company switcher for users belonging to several companies.
 - WhatsApp template messages (needed to reach helpers outside Meta's 24-hour window) and inbound WhatsApp webhooks.
-- Automatic charging of subscription plans (needs a payment processor such as Stripe).
 - QR code in MFA setup (manual key and `otpauth://` link are provided).
 - Route optimization with real driving times/traffic (only straight-line ordering + Google Maps link).
-- Bank connectivity and card payment processing.
+- Bank connectivity.
 
 ## Blocked by external credentials or authorization
 
 - Cloudflare staging deployment, remote D1/R2 creation, and the verified staging URL (needs `wrangler login` or an API token; the account ID is configured).
-- Email provider configuration.
+- Email: Resend key and a verified sending domain. Push: VAPID keys. Billing: Stripe keys and webhook. Reminders: Twilio account (US A2P 10DLC registration) or a Meta-approved WhatsApp template.
 - WhatsApp sending in production (code ready; needs a Meta WhatsApp Business account, phone number ID and token).
 - Turnstile keys and Workers AI binding (code ready; needs enabling in the Cloudflare account).
 - Bank connectivity (manual reconciliation only).
-- Payment processing (payments are recorded manually; no card data is collected or stored).
+- Card data is never collected or stored by this app; card payments happen on Stripe's pages.
 
 ## Requiring legal or accounting review
 

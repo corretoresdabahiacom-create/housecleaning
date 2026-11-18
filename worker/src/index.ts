@@ -8,13 +8,17 @@ import { messageRoutes, purgeExpiredMessages } from './modules/messages';
 import { reportRoutes, adminRoutes, recordJob } from './modules/reports';
 import { purgeDeletedCompanies } from './modules/maintenance';
 import { routeRoutes } from './modules/routes';
+import { invitationRoutes } from './modules/invitations';
+import { mobileRoutes } from './modules/mobile';
+import { billingRoutes } from './modules/billing';
+import { sendDueReminders } from './lib/reminders';
 import { rotateEncryptedData } from './lib/security';
 import { withStorage } from './lib/storage';
 
 export { RealtimeHub } from './realtime';
 
 export const router = new Router();
-authRoutes(router); crmRoutes(router); scheduleRoutes(router); financeRoutes(router); messageRoutes(router); reportRoutes(router); adminRoutes(router); routeRoutes(router);
+authRoutes(router); crmRoutes(router); scheduleRoutes(router); financeRoutes(router); messageRoutes(router); reportRoutes(router); adminRoutes(router); routeRoutes(router); invitationRoutes(router); mobileRoutes(router); billingRoutes(router);
 router.get('/api/health', () => json({ ok: true }), false);
 
 const MAX_BODY = 1_000_000;
@@ -27,7 +31,9 @@ export async function handleApi(req: Request, rawEnv: Env): Promise<Response> {
     if (!m) throw new HttpError(404, 'not_found');
     // CSRF: session cookie is SameSite=Strict AND every state-changing request must carry a custom header,
     // which cross-site forms cannot set (and CORS is not enabled).
-    if (req.method !== 'GET' && req.headers.get('x-requested-with') !== 'hcm') throw new HttpError(403, 'csrf');
+    // Stripe webhooks are server-to-server (no cookies); they are authenticated by their HMAC signature instead.
+    const isWebhook = req.method === 'POST' && url.pathname.startsWith('/api/stripe/webhook');
+    if (req.method !== 'GET' && !isWebhook && req.headers.get('x-requested-with') !== 'hcm') throw new HttpError(403, 'csrf');
     const session = await loadSession(env, req);
     if (m.route.auth && !session) throw new HttpError(401, 'unauthenticated');
     let cached: any;
@@ -76,6 +82,7 @@ export default {
     await recordJob(env, 'recurring_expenses', () => generateRecurringExpenses(env));
     await recordJob(env, 'purge_deleted_companies', () => purgeDeletedCompanies(env));
     await recordJob(env, 'reencrypt_old_key_versions', () => rotateEncryptedData(env));
+    await recordJob(env, 'appointment_reminders', () => sendDueReminders(env));
     await recordJob(env, 'prune_rate_limits', () => env.DB.prepare('DELETE FROM rate_limits WHERE window_start < ?').bind(Math.floor(Date.now() / 1000) - 86400).run());
   },
 };

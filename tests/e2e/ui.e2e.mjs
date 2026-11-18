@@ -139,6 +139,9 @@ test('real-time chat: helper receives the message without reloading', async () =
   await helper.goto(BASE);
   await field(helper, 'Email').fill('maria.e2e@example.com'); await field(helper, 'Password').fill('Helper123!pw');
   await helper.getByRole('button', { name: 'Sign in' }).click();
+  await helper.getByRole('heading', { name: 'My day' }).waitFor();
+  assert.equal(await helper.locator('nav a', { hasText: 'Customers' }).count(), 0);
+  await helper.evaluate(() => { location.hash = '/messages'; });
   await helper.getByRole('heading', { name: 'Messages' }).waitFor();
   await helper.getByRole('button', { name: /Maria Silva/ }).click();
   await helper.getByText('Live').waitFor({ timeout: 10000 });

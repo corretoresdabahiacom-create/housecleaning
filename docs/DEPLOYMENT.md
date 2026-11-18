@@ -33,7 +33,12 @@ The deploy also creates the `RealtimeHub` Durable Object (SQLite-backed, availab
 |---|---|
 | Bot protection (Turnstile) | Dashboard → Turnstile → add widget for the staging hostname. Set var `TURNSTILE_SITE_KEY` and `npx wrangler secret put TURNSTILE_SECRET --env staging`. Login and registration then require the widget. |
 | Message translation | Uncomment the `[env.staging.ai] binding = "AI"` block in `wrangler.toml`. Uses Workers AI model `@cf/meta/m2m100-1.2b`; usage beyond the daily free allocation is billed. |
-| WhatsApp sending | Requires a Meta WhatsApp Business account. Set var `WHATSAPP_PHONE_NUMBER_ID` and `npx wrangler secret put WHATSAPP_TOKEN --env staging` (System User token). Then each company must turn it on in Settings. Meta only delivers free-form text within 24 h of the helper's last WhatsApp reply; otherwise an approved template is required (not implemented). |
+| WhatsApp sending | Requires a Meta WhatsApp Business account. Set var `WHATSAPP_PHONE_NUMBER_ID` and `npx wrangler secret put WHATSAPP_TOKEN --env staging` (System User token). Then each company must turn it on in Settings. Meta only delivers free-form text within 24 h of the helper's last WhatsApp reply; otherwise an approved template is required (helper chat: not implemented; customer reminders use `WHATSAPP_REMINDER_TEMPLATE`). |
+| Email (invites, verification, password reset) | Create a Resend account, verify your sending domain, then `npx wrangler secret put RESEND_API_KEY --env staging` and add var `MAIL_FROM = "House Cleaning <no-reply@your-domain>"`. Without them the app still works; invitation links are shown to copy. |
+| Installable app + push notifications | Generate keys on your computer: `node scripts/gen-vapid.mjs`. Put the public key in var `VAPID_PUBLIC_KEY` and `VAPID_SUBJECT = "mailto:you@your-domain"`; `npx wrangler secret put VAPID_PRIVATE_KEY --env staging`. Each user enables it in Settings → Notifications (iPhone: first "Add to Home Screen"). |
+| Plan billing (Stripe) | `npx wrangler secret put STRIPE_SECRET_KEY --env staging` and `STRIPE_WEBHOOK_SECRET`. In Stripe → Developers → Webhooks add `https://<host>/api/stripe/webhook` with events `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid`, `invoice.payment_failed`. |
+| Customer payment links | No server secret: each company pastes its own Stripe key in Settings → Customer payments and adds the webhook URL shown there (events `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.expired`). |
+| 24 h reminders | SMS: secrets `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, var `TWILIO_FROM` (US numbers need A2P 10DLC registration). WhatsApp: Meta-approved template name in var `WHATSAPP_REMINDER_TEMPLATE` (parameters: customer name, date, time). Each company picks the channel in Settings and each customer must be opted in. |
 | Company purge window | Var `PURGE_AFTER_DAYS` (default 30). |
 | Key rotation | See [KEY_ROTATION.md](KEY_ROTATION.md). |
 
@@ -41,7 +46,8 @@ Verify on staging: register a company, check the session cookie is `Secure`, cre
 
 ## Before production
 
-- Configure an email provider (e.g. Cloudflare Email Service or another transactional provider) and wire `issueToken` in `worker/src/modules/auth.ts` to send verification and reset emails.
+- Configure email (Resend, see above) so verification, reset and invitation emails are delivered.
+- Apply migration `0004_invites_push_billing_reminders.sql` (`npx wrangler d1 migrations apply hcm-db-staging --env staging --remote`) **before** deploying this version.
 - Have the legal drafts in [legal/](legal/) reviewed by a US attorney and the financial methodology reviewed by a CPA.
 - Enable Turnstile (above) and consider Cloudflare Rate Limiting rules on `/api/auth/*`.
 - Integrate a payment processor (e.g. Stripe) if subscription plans should be charged automatically.

@@ -54,6 +54,25 @@ function ReceiptForm({ ar, onDone }: { ar: any; onDone: () => void }) {
     onSubmit={async (v) => { await post(`/api/finance/receivables/${ar.id}/receipts`, { ...v, idempotency_key: key }); toast(t('Saved')); onDone(); }} />;
 }
 
+/** Creates a Stripe Checkout link for the outstanding balance (company's own Stripe account) and offers copy / WhatsApp share. */
+function PaymentLinkBox({ ar, onChange }: { ar: any; onChange: () => void }) {
+  const { t } = useT(); const onErr = useErr();
+  const [link, setLink] = useState<{ url: string; amount_cents: number } | null>(null); const [busy, setBusy] = useState(false);
+  const past = useLoad(() => get(`/api/finance/receivables/${ar.id}/payment-links`), [ar.id, ar.received_cents]);
+  const msg = link ? `${t('Payment link')} — ${ar.description} (${m(link.amount_cents)}): ${link.url}` : '';
+  return <div className="paylink">
+    <h3>{t('Payment link')}</h3>
+    {!link ? <button className="btn" disabled={busy} onClick={async () => { setBusy(true); try { setLink(await post(`/api/finance/receivables/${ar.id}/payment-link`)); onChange(); } catch (e) { onErr(e); } finally { setBusy(false); } }}>🔗 {t('Create payment link for')} {m(ar.outstanding_cents)}</button>
+      : <>
+        <div className="linkbox"><input readOnly value={link.url} onFocus={(e) => e.currentTarget.select()} aria-label={t('Payment link')} />
+          <button className="btn" onClick={async () => { try { await navigator.clipboard.writeText(link.url); toast(t('Copied')); } catch { toast(link.url); } }}>{t('Copy')}</button></div>
+        <div className="row wrap"><a className="btn" target="_blank" rel="noopener noreferrer" href={`https://wa.me/?text=${encodeURIComponent(msg)}`}>WhatsApp</a>
+          <small className="muted">{t('The customer pays by card on Stripe’s page; the payment is recorded here automatically.')}</small></div>
+      </>}
+    {past.data?.items?.length ? <small className="muted">{t('Links created')}: {past.data.items.length} · {t('last')}: {past.data.items[0].created_at.slice(0, 10)} ({t('pl_' + past.data.items[0].status)})</small> : null}
+  </div>;
+}
+
 export function Receivables({ openOnly }: { openOnly?: boolean }) {
   const { t } = useT(); const { me } = useMe(); const onErr = useErr();
   const [status, setStatus] = useState(''); const [sel, setSel] = useState<any>(null); const [adding, setAdding] = useState(false);
@@ -83,6 +102,7 @@ export function Receivables({ openOnly }: { openOnly?: boolean }) {
           <h3>{t('Payment history')}</h3>
           <Table rows={detail.data.receipts} cols={[{ key: 'date', label: 'Date' }, { key: 'kind', label: 'Type', render: (r) => t(r.kind) }, { key: 'method', label: 'Method', render: (r) => t('pm_' + r.method) }, { key: 'amount_cents', label: 'Amount', num: true, render: (r) => m(r.kind === 'refund' ? -r.amount_cents : r.amount_cents) }]} empty="No payments recorded." />
           {canUi(me, 'financeWrite') && !['canceled', 'written_off'].includes(detail.data.receivable.status) && <>
+            {me.payments_enabled && !['paid'].includes(detail.data.receivable.status) && detail.data.receivable.outstanding_cents > 0 && <PaymentLinkBox ar={detail.data.receivable} onChange={() => {}} />}
             <h3>{t('Register payment')}</h3><ReceiptForm ar={detail.data.receivable} onDone={() => { detail.reload(); reload(); }} />
             <div className="row end">{detail.data.receivable.received_cents === 0 && <button className="btn ghost" onClick={async () => { try { await post(`/api/finance/receivables/${sel.id}/status`, { status: 'canceled' }); setSel(null); reload(); } catch (e) { onErr(e); } }}>{t('Cancel invoice')}</button>}
               {detail.data.receivable.status !== 'paid' && <button className="btn ghost" onClick={async () => { if (!confirm(t('Write off the outstanding balance?'))) return; try { await post(`/api/finance/receivables/${sel.id}/status`, { status: 'written_off' }); setSel(null); reload(); } catch (e) { onErr(e); } }}>{t('Write off')}</button>}</div>

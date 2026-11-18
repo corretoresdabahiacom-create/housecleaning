@@ -10,6 +10,8 @@ import { CalendarPage } from './pages/schedule';
 import { Helpers, HelperDetail, Teams } from './pages/helpers';
 import { FinanceOverview, Receivables, Payables, HelperPayments, DrePage, CashFlowPage, Profitability } from './pages/finance';
 import { Dashboard, Messages, Reports, Settings, AdminPage } from './pages/misc';
+import { MyDay, PaidPage } from './pages/mobile';
+import { registerServiceWorker } from './push';
 
 function useHash() {
   const [h, setH] = useState(() => location.hash.slice(1) || '/');
@@ -18,7 +20,8 @@ function useHash() {
 }
 export const nav = (p: string) => { location.hash = p; };
 
-const NAV: { path: string; label: string; icon: string; perm?: Parameters<typeof canUi>[1]; children?: { path: string; label: string }[] }[] = [
+const NAV: { path: string; label: string; icon: string; perm?: Parameters<typeof canUi>[1]; helperOnly?: boolean; children?: { path: string; label: string }[] }[] = [
+  { path: '/my-day', label: 'My day', icon: '☀', helperOnly: true },
   { path: '/', label: 'Dashboard', icon: '▦' },
   { path: '/customers', label: 'Customers', icon: '◉' },
   { path: '/properties', label: 'Properties', icon: '⌂' },
@@ -46,7 +49,7 @@ function Shell({ me }: { me: any }) {
   const helperOnly = me.role === 'helper';
 
   let page: React.ReactNode;
-  if (helperOnly) page = <Messages />;
+  if (helperOnly) page = seg[0] === 'messages' ? <Messages /> : seg[0] === 'settings' ? <Settings /> : <MyDay />;
   else switch (seg[0]) {
     case undefined: page = <Dashboard />; break;
     case 'customers': page = seg[1] ? <CustomerDetail id={seg[1]} /> : <Customers />; break;
@@ -65,14 +68,14 @@ function Shell({ me }: { me: any }) {
     default: page = <Dashboard />;
   }
   const active = (p: string) => (p === '/' ? hash === '/' : hash.startsWith(p.split('?')[0]) && (p.includes('?') ? hash.includes(p.split('?')[1]) : true));
-  const items = helperOnly ? NAV.filter((n) => n.path === '/messages') : NAV.filter((n) => !n.perm || canUi(me, n.perm));
+  const items = helperOnly ? NAV.filter((n) => n.path === '/my-day' || n.path === '/messages' || n.path === '/settings') : NAV.filter((n) => !n.helperOnly && (!n.perm || canUi(me, n.perm)));
 
   return (
     <div className="shell">
       <a href="#main" className="skip">{t('Skip to content')}</a>
       <header className="topbar">
         <button className="btn ghost menu-btn" onClick={() => setOpen(!open)} aria-label={t('Menu')} aria-expanded={open}>☰</button>
-        <a href="#/" className="brand"><span className="logo" aria-hidden>⌂</span><span><b>House Cleaning</b><small>Management</small></span></a>
+        <a href={helperOnly ? '#/my-day' : '#/'} className="brand"><span className="logo" aria-hidden>⌂</span><span><b>House Cleaning</b><small>Management</small></span></a>
         <div className="stripes" aria-hidden />
         <div className="row topright">
           <select value={lang} aria-label={t('Language')} onChange={(e) => { const l = e.target.value as Lang; setLang(l); put('/api/auth/language', { language: l }).catch(() => {}); }}>
@@ -100,20 +103,23 @@ function Shell({ me }: { me: any }) {
 }
 
 function App() {
+  const hash = useHash();
   const [me, setMe] = useState<any>(undefined);
   const refresh = useCallback(async () => { try { setMe(await get('/api/auth/me')); } catch { setMe(null); } }, []);
   useEffect(() => { refresh(); const f = () => setMe(null); window.addEventListener('hcm:unauthenticated', f); return () => window.removeEventListener('hcm:unauthenticated', f); }, [refresh]);
   let stored: Lang = 'en';
   try { stored = (localStorage.getItem('hcm_lang') as Lang) || (navigator.language.startsWith('pt') ? 'pt' : navigator.language.startsWith('es') ? 'es' : 'en'); } catch {}
   if (me === undefined) return null;
+  const publicPaid = hash.split('?')[0] === '/paid';
   return (
     <I18nProvider initial={me?.user?.language || stored} key={me?.user?.id || 'anon'}>
       <SessionCtx.Provider value={{ me, refresh }}>
-        {me ? <Shell me={me} /> : <AuthScreen onDone={refresh} />}
+        {publicPaid ? <PaidPage /> : me ? <Shell me={me} /> : <AuthScreen onDone={refresh} />}
         <Toaster />
       </SessionCtx.Provider>
     </I18nProvider>
   );
 }
 
+registerServiceWorker();
 createRoot(document.getElementById('root')!).render(<App />);
